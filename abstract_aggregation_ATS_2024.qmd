@@ -7,7 +7,7 @@ execute:
   output: false
   warning: false
 format: 
-  html:
+  html: 
     embed-resources: true
     number-sections: true
     toc: true
@@ -38,7 +38,7 @@ if(!exists("site_name")) {
 ```{r}
 
 # Step 1: List all CSV files in the directory
-files <- list.files(path = "aggregate_data", pattern = "\\.csv$", full.names = TRUE)
+files <- list.files(path = "aggregate_data", pattern = "\\.csv$", full.names = TRUE, recursive = TRUE)
 
 # Step 2: Function to extract base name using double underscore
 extract_base_name <- function(file_path) {
@@ -72,19 +72,24 @@ hospital_data <- lapply(hospital_files, read.csv) |> bind_rows()
 # Prepare hospital table summary with `system_hospital`
 hospital_table1_summary <- hospital_data |> 
   mutate(health_system = sub("Hospital\\s+(.*?)\\s+\\d+", "\\1", Hospital)) |> 
-  group_by(health_system, Hospital) |> 
-  mutate(Hospital_ID = cur_group_id()) |> 
-  ungroup() |> 
+    # Extract the hospital number from the Hospital column
+  mutate(hospital_number = str_extract(Hospital, "\\d+")) |>  
+  # Convert the extracted hospital_number to two digits
+  mutate(Hospital_ID = sprintf("%02d", as.integer(hospital_number))) |> 
+  # group_by(health_system, Hospital) |> 
+  # mutate(Hospital_ID = sprintf("%02d", cur_group_id())) |>  # Zero-pad Hospital_ID
+  # ungroup() |> 
   group_by(health_system) |> 
-  mutate(Health_system_ID = cur_group_id()) |> 
+  mutate(Health_system_ID = sprintf("%02d", cur_group_id())) |>  # Zero-pad Health_system_ID
   ungroup() |> 
   mutate(system_hospital = paste("System", Health_system_ID, "Hosp", Hospital_ID),
          system = paste("System", Health_system_ID))
 
 system_hospital <- hospital_table1_summary |> 
-  select(hospital_id = Hospital, system_hospital, system) |> 
+  select(hospital_id = Hospital, system_hospital, system, site = health_system) |> 
   distinct() |> 
-  mutate(hospital_id = str_to_lower(hospital_id))
+  mutate(hospital_id = str_to_lower(hospital_id),
+         site = str_to_lower(site))
 
 
 # Remove `hospital_table1_summary` from `file_groups` so it’s not processed again
@@ -202,8 +207,8 @@ percent_hispanic <- (total_hispanic / total_patients) * 100
 total_health_systems <- length(unique(hospital_table1_summary$health_system))
 total_hospitals <- length(unique(hospital_table1_summary$Hospital))
 
-start_date <- "January 1st, 2018"
-end_date <- "December 31st, 2024"
+start_date_chr <- "January 1st, 2018"
+end_date_chr <- "December 31st, 2024"
 
 
 # Print the results
@@ -281,7 +286,7 @@ ggplot(aes(x = proportion, y = hospital_id, fill = vt_bin)) +
   labs(
     title = "Proportion of Tidal Volume Categories by Hospital and Sex",
     x = "Tidal Volume per IBW (%)",
-    y = "",
+    y = "Hospital",
     fill = "Tidal Volume Category"
   ) +
   scale_fill_brewer(palette = "RdYlBu", direction = 1) +
@@ -292,14 +297,22 @@ ggplot(aes(x = proportion, y = hospital_id, fill = vt_bin)) +
     axis.text.x = element_text(angle = 45, hjust = 1),  # Angle x-axis labels for better readability
     legend.title = element_text(size = 10, face = "bold"),
     plot.title = element_text(size = 16, face = "bold"),
-    strip.text = element_text(size = 12, face = "bold"),  # Make facet labels bold
-
+    strip.text = element_text(size = 14, face = "bold.italic"),  # Make facet labels bold
+    axis.title.x = element_text(size = 14, face = "bold", margin = margin(t = 10)),
+    axis.title.y = element_text(size = 14, face = "bold"),
+    axis.text.y = element_blank(),
+    panel.grid.major.y = element_blank(),     # Remove major grid lines on x-axis
+    panel.grid.minor.y = element_blank(),      # Remove minor grid lines on x-axis
     legend.position = "top",
     legend.direction = "horizontal"  # Set legend direction to horizontal
   ) +
-  guides(fill = guide_legend(nrow = 1, byrow = TRUE, reverse = TRUE))  # Make legend have one row
+  guides(fill = guide_legend(nrow = 2, byrow = TRUE, reverse = TRUE))  # Make legend have one row
 
+ltvv_sex_category_plot
 
+# Save the plot as a high-resolution JPEG
+ggsave("aggregate_data/ltvv_sex_category_plot.jpeg", plot = ltvv_sex_category_plot, 
+       device = "jpeg", width = 10, height = 8, units = "in", dpi = 600)
 
 # Calculate the number of females and the number with htvv = 1
 rate_above_8cc_female  <- ltvv_female |> 
@@ -309,11 +322,11 @@ rate_above_8cc_female  <- ltvv_female |>
     default = 0))
 
 # Calculate the total number and number with htvv = 1
-total_females <- nrow(rate_above_8cc_female)
+total_females_htvv <- nrow(rate_above_8cc_female)
 count_htvv <- sum(rate_above_8cc_female$htvv)
 
 # Use prop.test to calculate the rate and confidence intervals
-htvv_rate <- prop.test(count_htvv, total_females)
+htvv_rate <- prop.test(count_htvv, total_females_htvv)
 
 # Extract rate and confidence interval
 rate_htvv_female <- htvv_rate$estimate * 100
@@ -353,31 +366,52 @@ model_objects <- mget(ls(pattern = "^model_coefs_sex"))
 # Combine all objects into one dataset
 combined_model_coefs_sex <- bind_rows(model_objects, .id = "source")
 
+model_names <- c(
+  "Male ~ HTVV (Binary)"                = "M_HTVV",
+  "Male ~ Vt"                           = "M_Vt",
+  "Male + Height ~ HTVV (Binary)"       = "M_H_HTVV",
+  "Male + Height ~ Vt"                  = "M_H_Vt",
+  "Male * Height ~ HTVV (Binary)"       = "M_Hx_HTVV",
+  "Male * Height ~ Vt"                  = "M_Hx_Vt",
+  "Male * rcs(Height) ~ HTVV (Binary)"  = "M_rcsHx_HTVV",
+  "Male * rcs(Height) ~ Vt"             = "M_rcsHx_Vt"
+)
 
 # View the combined dataset
 combined_model_coefs_sex <- combined_model_coefs_sex |> 
     mutate(significant = ifelse(PValue < 0.05, "Yes", "No")) |> 
-    mutate(Model = factor(Model, levels = 
-                     c(
-                       "Male ~ HTVV (Binary)",
-                       "Male ~ Vt",
-                       "Male + Height ~ HTVV (Binary)",
-                       "Male + Height ~ Vt",
-                       "Male * Height ~ HTVV (Binary)",
-                       "Male * Height ~ Vt",
-                       "Male * rcs(Height) ~ HTVV (Binary)",
-                       "Male * rcs(Height) ~ Vt"
-                     )
-    )) 
+    mutate(group = fifelse(str_detect(StudyID, "bin"), "Vt > 8cc/kg (OR)", "Vt cc/kg (Coef)"),
+         Estimate = ifelse(str_detect(StudyID, "bin"), exp(Estimate), Estimate),
+         LowerCI = ifelse(str_detect(StudyID, "bin"), exp(LowerCI), LowerCI),
+         UpperCI = ifelse(str_detect(StudyID, "bin"), exp(UpperCI), UpperCI)) |> 
+  mutate(
+    Model_Simple = factor(Model, levels = c(
+      "Male ~ HTVV (Binary)",
+      "Male ~ Vt",
+      "Male + Height ~ HTVV (Binary)",
+      "Male + Height ~ Vt",
+      "Male * Height ~ HTVV (Binary)",
+      "Male * Height ~ Vt",
+      "Male * rcs(Height) ~ HTVV (Binary)",
+      "Male * rcs(Height) ~ Vt"
+    ),
+                          labels = c(
+                            "m_htvv", "m_vt", 
+                            "m_h_htvv", "m_h_vt",
+                            "m_hx_htvv", "m_hx_vt", 
+                            "m_rcs_hx_htvv", "m_rcs_hx_vt"
+                          )))
+
+
 
 #Assuming your combined dataset `combined_model_coefs_sex` has columns:
 # "StudyID" for different models, "Site" for different sites, "Estimate", "LowerCI", and "UpperCI".
-combined_model_coefs_sex |> 
+combined_model_coefs_sex_plot <-  combined_model_coefs_sex |> 
+  mutate(Site = str_to_lower(Site)) |> 
+  left_join(system_hospital |> select(system, site) |> distinct(),
+            by = join_by(Site == site)) |> 
   filter(!str_detect(Model, "rcs")) |>
-  mutate(group = fifelse(str_detect(StudyID, "bin"), "Vt > 8cc/kg (OR)", "Vt cc/kg (Coef)"),
-         Estimate_transformed = ifelse(str_detect(StudyID, "bin"), exp(Estimate), Estimate),
-         LowerCI_transformed = ifelse(str_detect(StudyID, "bin"), exp(LowerCI), LowerCI),
-         UpperCI_transformed = ifelse(str_detect(StudyID, "bin"), exp(UpperCI), UpperCI)) |> 
+
   filter(Variable == "sex_categorymale") |>
   ggplot(aes(x = Estimate, y = system, color = Model, shape = significant)) +
   geom_point(position = position_dodge(width = 0.6), size = 4) +  # Plot the point estimates
@@ -397,6 +431,52 @@ combined_model_coefs_sex |>
   # scale_color_manual(values = c("#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"))  # Customize colors if needed
 
 
+# Getting male estimates
+male_estimates <- combined_model_coefs_sex |> 
+filter(Variable == "sex_categorymale") |> 
+filter(Site != "EU") |> 
+  summarise(mean_male_estimate = mean(Estimate, na.rm = TRUE),
+    min_male_estimate = min(Estimate, na.rm = TRUE),
+    max_male_estimate = max(Estimate, na.rm = TRUE),
+         .by = Model_Simple) 
+
+
+male_estimates
+
+significant_m_vt <- combined_model_coefs_sex |> 
+  filter(Variable == "sex_categorymale") |> 
+  filter(Site != "EU") |> 
+  filter(Model_Simple == "m_vt") |> 
+  filter(significant == "Yes") |> 
+  nrow() 
+
+significant_m_h_vt <- combined_model_coefs_sex |> 
+  filter(Variable == "sex_categorymale") |> 
+  filter(Site != "EU") |> 
+  filter(Model_Simple == "m_h_vt") |> 
+  filter(significant == "Yes") |> 
+  nrow() 
+
+
+#mediation analysis
+coef_m_vt <- combined_model_coefs_sex |> 
+  filter(Variable == "sex_categorymale") |> 
+  filter(Site != "EU") |> 
+  filter(Model_Simple == "m_vt") |> 
+  select(est_m_vt = Estimate, Site)
+
+coef_m_h_vt <- combined_model_coefs_sex |> 
+  filter(Variable == "sex_categorymale") |> 
+  filter(Site != "EU") |> 
+  filter(Model_Simple == "m_h_vt") |>  
+  select(est_m_h_vt = Estimate, Site)
+
+mediation_vt <- coef_m_h_vt |> left_join(coef_m_vt) |> 
+  mutate(difference = est_m_vt - est_m_h_vt) |> 
+  mutate(mediation = difference / est_m_vt)
+
+mediation_vt_min <- min(mediation_vt$mediation)
+mediation_vt_max <- mediation_vt |> filter(mediation <1) |> pull() |> max()
 ```
 
 ## Sex_category / Height Models
@@ -412,21 +492,44 @@ min_height <- round(min(model_preds_sex_category_height_ltvv$height_inches, na.r
 max_height <- round(max(model_preds_sex_category_height_ltvv$height_inches, na.rm = TRUE))
 
 
-# Ensure Model is a factor
-all_predictions_continuous <- model_preds_sex_category_height_ltvv |> 
-  filter(!str_detect(Model, "Binary")) |> 
+model_preds_sex_category_height_ltvv <-  model_preds_sex_category_height_ltvv |> 
   mutate(Model = factor(Model)) |> 
   mutate(sex_category = group) |> 
-  mutate(height_inches = x)
+  mutate(height_inches = x) |> 
+    filter(!str_detect(Model, "rcs")) |> 
+  filter(height_inches < 80) |> 
+  filter(height_inches > 54) |>   
+  mutate(
+    Model_Simple = factor(Model, levels = c(
+      "Male ~ HTVV (Binary)",
+      "Male ~ Vt",
+      "Male + Height ~ HTVV (Binary)",
+      "Male + Height ~ Vt",
+      "Male * Height ~ HTVV (Binary)",
+      "Male * Height ~ Vt",
+      "Male * rcs(Height) ~ HTVV (Binary)",
+      "Male * rcs(Height) ~ Vt"
+    ),
+                          labels = c(
+                            "m_htvv", "m_vt", 
+                            "m_h_htvv", "m_h_vt",
+                            "m_hx_htvv", "m_hx_vt", 
+                            "m_rcs_hx_htvv", "m_rcs_hx_vt"
+                          )))
 
+
+# Ensure Model is a factor
+all_predictions_continuous <- model_preds_sex_category_height_ltvv |> 
+  filter(!str_detect(Model, "Binary"))
 
 
 
 # Plot all models together
 all_predictions_continuous_plot <- all_predictions_continuous |> 
-  ggplot(aes(x = height_inches, y = predicted, color = sex_category)) +
+  ggplot(aes(x = height_inches, y = predicted, color = sex_category, group = interaction(health_system, sex_category))) +
   geom_line(size = 1) +
-  facet_wrap(~ Model) +
+  # facet_wrap(~ Model) +
+    facet_grid(health_system ~ Model) +
   labs(
     title = "Predicted VT per kg IBW by Height and Sex Category",
     x = "Height (inches)",
@@ -445,23 +548,20 @@ all_predictions_continuous_plot <- all_predictions_continuous |>
     strip.text = element_text(size = 12, face = "bold")
   )
 
-
+all_predictions_continuous_plot
 
 # Ensure Model is a factor
 all_predictions_binary <- model_preds_sex_category_height_ltvv |> 
-  filter(str_detect(Model, "Binary")) |> 
-  mutate(Model = factor(Model)) |> 
-  mutate(sex_category = group) |> 
-  mutate(height_inches = x)
+  filter(str_detect(Model, "Binary"))
 
 
 
 
 # Plot all models together
 all_predictions_binary_plot <- all_predictions_binary |> 
-  ggplot(aes(x = height_inches, y = predicted, color = sex_category)) +
+  ggplot(aes(x = height_inches, y = predicted, color = sex_category, group = interaction(health_system, sex_category))) +
   geom_line(size = 1) +
-  facet_wrap(~ Model) +
+  facet_grid(health_system ~ Model) +
   labs(
     title = "Predicted VT per kg IBW by Height and Sex Category",
     x = "Height (inches)",
@@ -480,6 +580,32 @@ all_predictions_binary_plot <- all_predictions_binary |>
     strip.text = element_text(size = 12, face = "bold")
   )
 
+all_predictions_binary_plot
+
+
+
+
+#### getting across system predictions
+sex_cat_hours_hospital <- ltvv_female |> 
+  group_by(sex_category, health_system) |> 
+  summarise(sex_hosp_count_hours = n())
+
+
+weighted_means <- model_preds_sex_category_height_ltvv |> 
+  filter(Model_Simple == "m_vt") |> 
+  select(predicted, health_system, sex_category) |> distinct() |> 
+  left_join(sex_cat_hours_hospital) |> 
+    group_by(sex_category) %>%
+  summarise(weighted_tidal_volume = weighted.mean(predicted, sex_hosp_count_hours))
+
+# Calculate the absolute difference
+abs_difference <- abs(diff(weighted_means$weighted_tidal_volume))
+
+weighted_means_f <- weighted_means |> filter(sex_category == "female") |> pull(weighted_tidal_volume)
+weighted_means_m <- weighted_means |> filter(sex_category == "male") |> pull(weighted_tidal_volume)
+# Display results
+weighted_means
+abs_difference
 
 
 ```
@@ -496,14 +622,21 @@ Nicholas E. Ingraham, Casey Eddington, Benjamin Schmid, Alex Ortiz, Gary Weissma
 Low tidal volume ventilation (LTVV) reduces mortality in mechanically ventilated patients with severe hypoxic respiratory failure.[@network2000brower]  LTVV also benefits populations not originally included in the landmark trail. [@SerpaNeto__2012__Associationbetweenuse] Despite this, adherence to delivering LTVV varies in clinical practice. [@Gao__2021__LungProtectiveVentilationOver]  In this study we sought to explore potential mechanisms underlying LTVV adherence, specifically patient sex and their height. 
 
 **Methods**  
-The Common Longitudinal Intensive Care Unit (CLIF) consortium is comprised of **`r total_health_systems`** US academic health systems that use a standardized data format to facilitate federated studies of critical illness. We identified all adult patients admitted to the ICU and required at least 24 hours of mechanical ventilation from **`r start_date`** to **`r end_date`** , excluding patients with tracheostomy within 72 hours of admission.
+The Common Longitudinal Intensive Care Unit (CLIF) consortium is comprised of **`r total_health_systems`** US academic health systems that use a standardized data format to facilitate federated studies of critical illness. We identified all adult patients admitted to the ICU and required at least 24 hours of mechanical ventilation from **`r start_date_chr`** to **`r end_date_chr`** , excluding patients with tracheostomy within 72 hours of admission.
 
 **Results**  
-Of the **`r total_patients`** critically ill adults, the mean age was **`r round(mean_age, 1)`** years (standard deviation **`r round(sd_age, 1)`** years), and there were **`r format(total_females, scientific = FALSE)`** (**`r round(percent_females, 1)`%**) females, **`r total_black`** (**`r round(percent_black, 1)`%**) Black patients, and **`r total_hispanic`** (**`r round(percent_hispanic, 1)`%**) Hispanic patients across **`r total_health_systems`** healthcare systems and
-**`r total_hospitals`** hospitals. **Figure 1** shows the distribution of LTVV statified by patient sex. The mean rate of LTVV in females across all patients was **`r round(rate_htvv_female, 1)`% (`r round(conf_interval_female[1], 1)` - `r round(conf_interval_female[2], 1)`)** while the rate for males was **`r round(rate_htvv_male, 1)`% (`r round(conf_interval_male[1], 1)` - `r round(conf_interval_male[2], 1)`)**. When adjusting for height 
+Of the **`r total_patients`** critically ill adults, the mean age was **`r round(mean_age, 1)`** years (standard deviation **`r round(sd_age, 1)`** years), and there were **`r format(total_females, scientific = FALSE)`** (**`r round(percent_females, 1)`%**) females, **`r format(total_black, scientific = FALSE)`** (**`r round(percent_black, 1)`%**) Black patients, and **`r total_hispanic`** (**`r round(percent_hispanic, 1)`%**) Hispanic patients across **`r total_health_systems`** healthcare systems and
+**`r total_hospitals`** hospitals. **Figure 1** shows the distribution of LTVV statified by patient sex. The mean rate of LTVV in females across all patients was **`r round(100 - rate_htvv_female, 1)`% (`r round(100 - conf_interval_female[2], 1)`** - **`r round(100 - conf_interval_female[1], 1)`)** while the rate for males was **`r round(100 - rate_htvv_male, 1)`% (`r round(100 - conf_interval_male[2], 1)`** - **`r round(100 - conf_interval_male[1], 1)`)**. 
+Using the baseline models, females were predicted to have a tidal volume **`r abs_difference`** cc/kg IBW higher than males (**`r weighted_means_f`**  vs. **`r weighted_means_m`** )
+Estimates were significant for male (vs. female) in **`r significant_m_vt`** hospitals and ranged from **`r round(male_estimates |> filter(Model_Simple == "m_vt") |> select(min_male_estimate), 1)`** to **`r round(male_estimates |> filter(Model_Simple == "m_vt") |> select(max_male_estimate), 1)`**, but when corrected for height the estimates were significant in **`r significant_m_h_vt`** hospitals and ranged from **`r round(male_estimates |> filter(Model_Simple == "m_h_vt") |> select(min_male_estimate), 1)`** to **`r round(male_estimates |> filter(Model_Simple == "m_h_vt") |> select(max_male_estimate), 1)`**.
+
+
+mediation analsyis resulted in **`r round(mediation_vt_min, 1)*100`%** to **`r round(mediation_vt_max*100, 1)`**
 
 **Conclusion** 
 XYZ
+
+After adjustment for important confounders, female patients received Vts that were an average of **`r abs_difference`** cc/kg IBW higher than male patients
 
 ```{r}
 #| output: true
@@ -526,6 +659,16 @@ all_predictions_continuous_plot
 #| output: true
 
 all_predictions_binary_plot
+
+
+```
+
+
+
+```{r}
+#| output: true
+
+combined_model_coefs_sex_plot
 
 
 ```
@@ -556,13 +699,25 @@ mode_hospital_summary_table <- mode_hospital_summary_table |>
 
 mode_hosp_order <- mode_hospital_summary_table |> select(hospital_id) |> pull()
 
+mode_hosp_order2 <- mode_hourly_resp_support_table |> 
+  mutate(total_mode_hours = sum(n, na.rm = TRUE),
+         .by = hospital_id_graph) |> 
+  filter(mode_category == "assist control-volume control") |> 
+  mutate(percent = n/total_mode_hours) |> 
+  distinct() |> 
+  arrange(percent) |> 
+  select(hospital_id_graph) |>  pull()
+
 
 # uncount
 mode_hourly_resp_support <- mode_hourly_resp_support_table |> 
   # mutate(hospital_id = str_to_lower(hospital_id_graph)) |> 
   # left_join(system_hospital) |> 
   # mutate(hospital_id_graph = system_hospital) |> 
-  mutate(hospital_id_graph = factor(hospital_id_graph, levels = mode_hosp_order)) |> 
+  mutate(hospital_id_graph = factor(hospital_id_graph, levels = 
+                                      # mode_hosp_order    #order by total mode hours
+                                      mode_hosp_order2    #order by acvc
+                                    )) |> 
     mutate(mode_category = fcase(
               mode_category == "assist control-volume control",      "assist control-volume control", 
               mode_category == "pressure support/cpap",              "pressure support/cpap", 
@@ -597,26 +752,58 @@ plot_mode_hourly_resp_support <-
   # Use theme_minimal to create a minimal theme
   theme_minimal() +
   # adjusting tick marks for x axis
-  theme(axis.text.x = element_text(angle = 30, hjust = 1, vjust = 1)) +
+  # theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) +
   # Add the summary data as a layer with a dummy aesthetic for color
-  geom_point(data = mode_hospital_summary_table, aes(x = hospital_id, y = normalized_count, color = "Total Counts"), size = 3) +
-  # Add horizontal lines at the height of each point, only spanning the width of the bar
-  geom_errorbar(data = mode_hospital_summary_table, aes(x = hospital_id, ymin = normalized_count, ymax = normalized_count, group = 1, color = "Total Counts"),
-                width = 0.9,  # Adjust this value to change the width of the horizontal lines
-                linewidth = 0.5) +  # Adjust size for line thickness
+  # geom_point(data = mode_hospital_summary_table, aes(x = hospital_id, y = normalized_count, color = "Total Counts"), size = 3.5) +
+  # # Add horizontal lines at the height of each point, only spanning the width of the bar
+  # geom_errorbar(data = mode_hospital_summary_table, aes(x = hospital_id, ymin = normalized_count, ymax = normalized_count, group = 1, color = "Total Counts"),
+  #               width = 0.9,  # Adjust this value to change the width of the horizontal lines
+  #               linewidth = 0.9) +  # Adjust size for line thickness
   # geom_line(data = mode_hospital_summary_table, aes(x = hospital_id_graph, y = normalized_count, group = 1, color = "Total Counts"), linewidth = 1) +
   # Customize the legend for the dummy aesthetic
-  scale_color_manual(name = "Legend", values = c("Total Counts" = "black"),
-                     labels = c("Total Counts" = "Total Mode Counts (Normalized)")) +
-  guides(fill = guide_legend(title = "Ventilator Mode Category", override.aes = list(color = NA)), 
-         color = guide_legend(title = "")) +
-  scale_fill_discrete(breaks = 
+  # scale_color_manual(name = "Legend", 
+  #                    values = c("Total Counts" = "black"),
+  #                    labels = c("Total Counts" = "Total Mode Counts (Normalized)")) +
+  # 
+  guides(
+    # color = guide_legend(title = "", order = 1),
+    fill = guide_legend(title = "Mode Category", override.aes = list(color = NA), order = 2)
+) +
+  
+  scale_fill_brewer(palette = "Accent",
+                    breaks = 
                         c("Assist Control-Volume Control",
                           "Pressure Support/Cpap",
                           "Pressure-Regulated Volume Control",
                           "Pressure Control",
                           "Simv",
-                          "Other"))
+                          "Other")) +
+
+  # scale_fill_manual(values = custom_colors) +  # Apply the custom color palette
+  theme_minimal() +
+  theme(
+    # axis.text.x = element_text(size = 8, angle = 45, hjust = 1),  # Angle x-axis labels for better readability
+    axis.text.x = element_blank(),
+    axis.title.x = element_text(size = 14, face = "bold"),
+    axis.title.y = element_text(size = 14, face = "bold", margin = margin(r = 10)),  # Add space to the right of y-axis title
+    axis.text.y = element_text(size = 8, face = "bold"),  
+    plot.title = element_text(size = 16, face = "bold"),
+    legend.title = element_text(size = 14, face = "bold"),
+    axis.ticks.x = element_blank(),
+    panel.grid.major.x = element_blank(),     # Remove major grid lines on x-axis
+    panel.grid.minor.x = element_blank(),      # Remove minor grid lines on x-axis
+    strip.text = element_text(size = 12, face = "bold")  # Make facet labels bold
+)
+
+plot_mode_hourly_resp_support
+ggsave("aggregate_data/plot_mode_hourly_resp_support.jpeg", plot = plot_mode_hourly_resp_support, 
+       device = "jpeg", width = 10, height = 9, units = "in", dpi = 600)
+
+
+# Total mode hours
+total_mode_hours <- mode_hospital_summary_table |> 
+  summarise( total_mode_hours = sum(count)) |> pull()
+
 
 # Step 1: Rate of each setting across the entire dataframe
 # Calculate the rate of each mode_category
@@ -636,6 +823,10 @@ rate_table <- mode_hourly_resp_support |>
   group_by(hospital_id) |> 
   mutate(hosp_hour_count = n()) |> ungroup() |> select(mode_category, hospital_id, hosp_hour_count) 
 
+vc_hours <- rate_table |> 
+  filter(mode_category == "Assist Control-Volume Control") |> 
+  nrow()
+
 vc_rates <- rate_table |> 
   filter(mode_category == "Assist Control-Volume Control") |> 
   group_by(hospital_id) |> 
@@ -647,6 +838,12 @@ highest_vc <- vc_rates |> slice_max(rate, n = 1)
 lowest_vc <- vc_rates |> slice_min(rate, n = 1)
 
 # Step 3: Highest and lowest rate of "Pressure Control" by hospital
+pc_hours <- rate_table |> 
+  filter(mode_category == "Pressure Control") |> 
+  nrow()
+
+ 
+
 pc_rates <- rate_table |> 
   filter(mode_category == "Pressure Control") |> 
   group_by(hospital_id) |> 
@@ -658,6 +855,11 @@ highest_pc <- pc_rates |> slice_max(rate, n = 1)
 lowest_pc <- pc_rates |> slice_min(rate, n = 1)
 
 # Step 4: Highest and lowest rate of "Pressure-Regulated Volume Control" by hospital
+
+prvc_hours <- rate_table |> 
+  filter(mode_category == "Pressure-Regulated Volume Control") |> 
+  nrow()
+
 prvc_rates <- rate_table |> 
   filter(mode_category == "Pressure-Regulated Volume Control") |> 
   group_by(hospital_id) |> 
@@ -668,6 +870,10 @@ prvc_rates <- rate_table |>
 highest_prvc <- prvc_rates |> slice_max(rate, n = 1)
 lowest_prvc <- prvc_rates |> slice_min(rate, n = 1)
 
+
+simv_hours <- rate_table |> 
+  filter(mode_category == "Simv") |> 
+  nrow()
 
 # Step 4: Highest and lowest rate of "Pressure-Regulated Volume Control" by hospital
 simv_rates <- rate_table |> 
@@ -749,10 +955,10 @@ Healthcare outcomes vary across institutions in critically ill patients. Practic
 The Common Longitudinal Intensive Care Unit (CLIF) consortium
 is comprised of **`r total_health_systems`** US academic health systems
 that use a standardized data format to facilitate federated studies of
-critical illness. We identified all adult patients admitted to the ICU and required at least 24 hours of mechanical ventilation from **`r start_date`** to **`r end_date`** , excluding patients with tracheostomy within 72 hours of admission.
+critical illness. We identified all adult patients admitted to the ICU and required at least 24 hours of mechanical ventilation from **`r start_date_chr`** to **`r end_date_chr`** , excluding patients with tracheostomy within 72 hours of admission.
 
 **Results**  
-Of the **`r total_patients`** critically ill adults, the mean age was **`r round(mean_age, 1)`** years (standard deviation **`r round(sd_age, 1)`** years), and there were **`r format(total_females, scientific = FALSE)`** (**`r round(percent_females, 1)`%**) females, **`r total_black`** (**`r round(percent_black, 1)`%**) Black patients, and **`r total_hispanic`** (**`r round(percent_hispanic, 1)`%**) Hispanic patients across **`r total_health_systems`** healthcare systems and **`r total_hospitals`** hospitals. Using device and mode flosheet names from the EHR that were linked to the CLIF common data elements, we executed the "CLIF Respiratory Support Waterfall" across all our sites. The algorithm leverages the most specific data from the EHR (oxygen devices) to identify transitions in the patients respiratory status. It then takes a stepwise approach by looking within the prior hierarchy to find other transitions (e.g. modes). This approach leads to a final respiratory support ID which is used to fill in missing data. The final dataframe includes an hourly level of patient information. The most common modes used across all health systems included volume control (**`r round(rate_vc, 1)`**), pressure control (**`r round(rate_pc, 1)`**), and pressure-regulated volume control (**`r round(rate_prvc, 1)`**). Hospitals varied on the use of different mode settings with the highest hospital rate of volume control was **`r round(highest_vc$rate, 1)`** and the lowest was **`r round(lowest_vc$rate, 1)`**. Less common forms of ventilation, such as SIMV, varied from **`r round(lowest_simv$rate, 1)`** to **`r round(highest_simv$rate, 1)`**.
+Of the **`r total_patients`** critically ill adults who recieved a total of **`r total_mode_hours`** hours of mechanical ventilation, the mean age was **`r round(mean_age, 1)`** years (standard deviation **`r round(sd_age, 1)`** years), and there were **`r format(total_females, scientific = FALSE)`** (**`r round(percent_females, 1)`%**) females, **`r format(total_black, scientific = FALSE)`** (**`r round(percent_black, 1)`%**) Black patients, and **`r total_hispanic`** (**`r round(percent_hispanic, 1)`%**) Hispanic patients across **`r total_health_systems`** healthcare systems and **`r total_hospitals`** hospitals. Using device and mode flowsheet names from the EHR that were linked to the CLIF common data elements, we executed the "CLIF Respiratory Support Waterfall" across all our sites. The algorithm leverages the most specific data from the EHR (oxygen devices) to identify transitions in the patients respiratory status. It then takes a stepwise approach by looking within the prior hierarchy to find other transitions (e.g. modes). This approach formulates a final respiratory support ID for each device/mode segment and is leveraged to fill in missing data. The resultant data includes an hourly level of patient information. The most common modes used across all health systems included **`r format(vc_hours, scientific = FALSE)`** of volume control (**`r round(rate_vc, 1)`%**), **`r format(pc_hours, scientific = FALSE)`** of pressure control (**`r round(rate_pc, 1)`%**), and **`r format(prvc_hours, scientific = FALSE)`** of pressure-regulated volume control (**`r round(rate_prvc, 1)`%**). Hospitals varied on the use of different mode settings with the highest hospital rate of volume control was **`r round(highest_vc$rate, 1)`%** and the lowest was **`r round(lowest_vc$rate, 1)`%**. Less common forms of ventilation, such as SIMV, varied from **`r round(lowest_simv$rate, 1)`%** to **`r round(highest_simv$rate, 1)`%**.
 
 **Conclusion**  
 Granular data from critically ill patients can be complex and rittled with missingness and erroneous data. By leveraging the CLIF platform, we developed a cross-institutional mechanism to extract and formulate hourly patient data that is critical to ICU research. The usefulness is demonstrated through our exploration of mode variation across **`r total_hospitals`** hospitals.
@@ -946,17 +1152,10 @@ respiratory failure.
 Methods: The Common Longitudinal Intensive Care Unit (CLIF) consortium
 is comprised of **`r total_health_systems`** US academic health systems
 that use a standardized data format to facilitate federated studies of
-critical illness. We identified all adult patients admitted to the ICU and required at least 24 hours of mechanical ventilation from **`r start_date`** to **`r end_date`** , excluding patients with trachestomy within 72 hours of admission.
+critical illness. We identified all adult patients admitted to the ICU and required at least 24 hours of mechanical ventilation from **`r start_date_chr`** to **`r end_date_chr`** , excluding patients with trachestomy within 72 hours of admission.
 
 **Results**  
-Of the **`r total_patients`** critically ill adults, the mean
-age was **`r round(mean_age, 1)`** years (standard deviation
-**`r round(sd_age, 1)`** years), and there were **`r format(total_females, scientific = FALSE)`**
-(**`r round(percent_females, 1)`%**) females, **`r total_black`**
-(**`r round(percent_black, 1)`%**) Black patients, and
-**`r total_hispanic`** (**`r round(percent_hispanic, 1)`%**) Hispanic
-patients across **`r total_health_systems`** healthcare systems and
-**`r total_hospitals`** hospitals.
+Of the **`r total_patients`** critically ill adults, the mean age was **`r round(mean_age, 1)`** years (standard deviation **`r round(sd_age, 1)`** years), and there were **`r format(total_females, scientific = FALSE)`** (**`r round(percent_females, 1)`%**) females, **`r format(total_black, scientific = FALSE)`** (**`r round(percent_black, 1)`%**) Black patients, and **`r total_hispanic`** (**`r round(percent_hispanic, 1)`%**) Hispanic patients across **`r total_health_systems`** healthcare systems and **`r total_hospitals`** hospitals.
 
 
 ```{r}
