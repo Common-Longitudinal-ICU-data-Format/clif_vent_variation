@@ -36,6 +36,9 @@
 #                  --ultimately i don't think it was as big of an issue
 #           4) the setting below might have helped at some point but ultimately might not have mattered
 #                  --commenting out for now
+#             ~~~~~~~~~~~~~~~~~~~ could run the code which is great, but still having issues with status not syncing
+#           5) might be an issue with 2 diff renv places.  Added to Rprofile to state we need to use renv in THIS project
+#           6) might be an issue with which packages need sourcing.  see code below to help
 #           
 #           
 #           
@@ -67,7 +70,7 @@ if (!requireNamespace("renv", quietly = TRUE)) {
 # 
 # # If renv is inconsistent, perform cleanup & rebuild
 # if (any(grepl("inconsistent|missing", status_info, ignore.case = TRUE))) {
-#   message("\n🔄 Issues detected in renv environment! Cleaning and rebuilding...\n")
+#   message("\n Issues detected in renv environment! Cleaning and rebuilding...\n")
 #   
 #   # Step 1: Remove stale locks and clean the renv library
 #   # renv::clean()
@@ -78,23 +81,92 @@ if (!requireNamespace("renv", quietly = TRUE)) {
 #   # Step 3: Fully restore and force rebuild all packages
 #   renv::restore(prompt = FALSE, rebuild = TRUE)
 #   
-#   message("\n✅ renv environment successfully rebuilt!\n")
+#   message("\n renv environment successfully rebuilt!\n")
 # } else {
-#   message("\n✅ renv environment is already consistent. Skipping restore.\n")
+#   message("\n renv environment is already consistent. Skipping restore.\n")
 # }
 # 
 # # Final activation to ensure renv is fully loaded
 # # renv::activate()
 # 
 # # Troubleshooting instructions (if renv keeps failing)
-# message("\n💡 If renv still fails, try running the following manually:\n")
+# message("\n If renv still fails, try running the following manually:\n")
 # message("renv::deactivate()")
 # message('unlink("renv/library", recursive = TRUE, force = TRUE)')
 # message("renv::activate()")
+# 
+# 
+###############################################################################
+#   How to find Packages that need SOURCE
+
+installed_pkgs <- installed.packages()
+
+# Convert R version to numeric correctly
+r_version <- as.numeric(paste(R.version$major, R.version$minor, sep = "."))
+
+# Extract 'Built' column safely, handling missing values
+built_version <- installed_pkgs[, "Built"]
+built_version <- suppressWarnings(as.numeric(sub("-.*", "", built_version)))  # Extract major.minor from 'Built'
+
+# Handle missing values in Built column
+built_version[is.na(built_version)] <- 0  # Replace NA with 0 to force mismatch
+
+# Identify packages built under a different R version
+needs_source_version <- rownames(installed_pkgs)[built_version != r_version]
+
+# Get packages that require compilation (C/C++/Fortran)
+needs_compilation <- rownames(installed_pkgs)[installed_pkgs[, "NeedsCompilation"] == "yes"]
+
+# Exclude base R packages (which should not be rebuilt)
+base_packages <- rownames(installed_pkgs)[installed_pkgs[, "Priority"] %in% c("base", "recommended")]
+
+# Remove corrupted packages (those missing `package.rds` in Meta/)
+corrupted_pkgs <- rownames(installed_pkgs)[!file.exists(file.path(installed_pkgs[, "LibPath"], installed_pkgs[, "Package"], "Meta/package.rds"))]
+
+# Combine all checks and remove NAs
+needs_source <- setdiff(unique(c(needs_source_version, needs_compilation, corrupted_pkgs)), base_packages)
+needs_source <- needs_source[!is.na(needs_source)]  # Remove any NA values
+
+# Print the list of packages that should be installed from source
+print(needs_source)
 
 
 
 
+##### 
+#     only run below if you are having issues when you KNOW you have package installed 
+#     but its not loading in the right way for some reason
+
+# renv::remove(needs_source)
+# renv::install(c("glue", "magrittr", "rlang", "vctrs", "knitr"))  ## Key dependencies
+# renv::rebuild(needs_source, type = "source", prompt = FALSE)
+
+###############################################################################
+###############################################################################
+###############################################################################
+# #   If you need a full reboot, this should work as long as lock.file is there!
+# 
+# # Completely remove the renv cache
+# renv::deactivate()
+# unlink("Y:/DataStageData/Nick/CLIF/CLIF_ventilation_variation_2024/renv", recursive = TRUE, force = TRUE)
+# 
+# # Manually clean staging & remove broken libraries
+# unlink("Y:/DataStageData/Nick/CLIF/CLIF_ventilation_variation_2024/renv/staging", recursive = TRUE, force = TRUE)
+# unlink("Y:/DataStageData/Nick/CLIF/CLIF_ventilation_variation_2024/renv/library", recursive = TRUE, force = TRUE)
+# 
+# # Clear Renv cache
+# Sys.setenv(RENV_PATHS_CACHE = "")
+# 
+# renv::activate()
+# renv::clean()
+# 
+# ## These are essential, get these installed first
+# renv::install(c("glue", "magrittr", "rlang", "vctrs", "knitr"))
+# 
+# renv::restore()
+
+###############################################################################
+###############################################################################
 ###############################################################################
 
 # # Initialize renv for the project:
@@ -104,16 +176,17 @@ if (!requireNamespace("renv", quietly = TRUE)) {
 # renv::install("BiocManager")
 # BiocManager::install("IRanges")
 
-# # renv::install(c("tidyverse", "ggthemes", "systemfonts",  "styler", "readxl", "writexl", "DBI", "dbplyr", "knitr", "pandoc", "janitor", "data.table", "duckdb" ,"powerjoin", "collapse", "tidyfast", "datapasta", "fst", "dtplyr", "bit64", "zoo", "fuzzyjoin", "arrow", "hrbrthemes", "here", "table1", "rvest", "tidymodels", "pscl", "survminer", "gt", "gtsummary", "broom.helpers", "broom.mixed", "lme4", "lmerTest", "merTools", "finalfit"))
+# # renv::install(c("tidyverse", "ggthemes", "systemfonts",  "styler", "readxl", "writexl", "DBI", "dbplyr", "knitr", "pandoc", "janitor", "data.table", "duckdb" ,"powerjoin", "collapse", "tidyfast", "datapasta", "fst", "dtplyr", "bit64", "zoo", "tzdb", "fuzzyjoin", "arrow", "hrbrthemes", "here", "table1", "rvest", "tidymodels", "pscl", "survminer", "gt", "gtsummary", "broom.helpers", "broom.mixed", "lme4", "lmerTest", "merTools", "finalfit"))
 # 
 #   
-# renv::install(c("tidyverse", "systemfonts", "readxl", "DBI", "dbplyr", "knitr", "janitor", "data.table", "powerjoin", "collapse", "tidyfast", "datapasta", "fst", "dtplyr", "bit64", "arrow", "hrbrthemes", "here", "table1", "rvest", "tidymodels", "pscl", "survival", "survminer", "gt", "gtsummary", "broom.helpers", "finalfit"))
+# renv::install(c("tidyverse", "systemfonts", "readxl", "DBI", "dbplyr", "knitr", "janitor", "data.table", "powerjoin", "collapse", "tidyfast", "datapasta", "fst", "dtplyr", "bit64", "tzdb", "arrow", "hrbrthemes", "here", "table1", "rvest", "tidymodels", "pscl", "survival", "survminer", "gt", "gtsummary", "broom.helpers", "finalfit"))
 # 
 # # # Save the project's package state:
 # renv::snapshot()
 ################################################################################
 
 library(lmerTest)
+library(tzdb)
 library(tidyverse)
 library(systemfonts)
 library(readxl)
@@ -138,7 +211,7 @@ library(gt)
 library(gtsummary)
 library(broom.helpers)
 library(broom.mixed)
-# library(tidymodels)
+library(tidymodels)
 library(pscl)
 library(survival)
 library(survminer)
@@ -146,9 +219,12 @@ library(survminer)
 library(lme4)
 library(finalfit)
 library(furrr)
-# library(rms)
-# library(ggeffects)
+library(rms)
+library(ggeffects)
+library(rspiro)
 
+
+options(arrow.unsafe_metadata = TRUE)
 select <- dplyr::select
 
 setDTthreads(0)
@@ -382,6 +458,38 @@ end_date <- "2024-09-30"
 
 
 
+
+# Function to source a .qmd file
+source_qmd <- function(file, local = FALSE, ...){
+  options(knitr.duplicate.label = 'allow')
+  
+  tempR <- tempfile(tmpdir = ".", fileext = ".R")
+  on.exit(unlink(tempR))
+  knitr::purl(file, output=tempR)
+  
+  envir <- globalenv()
+  source(tempR, local = envir, ...)
+}
+
+
 message("##########################################
-You have completed setup!!! Woohooo!!! \n Please proceed on to 01_cohorting script \n 
+You have completed setup!!! Woohooo!!! \n Now proceeding on to 01_cohorting script \n 
 ##########################################")
+
+
+# Example usage: 
+# Assuming "my_data_analysis.qmd" is the .qmd file you want to source
+source_qmd(here("code", "01_cohorting.qmd"), echo = TRUE)
+
+
+
+message("##########################################
+You have completed Cohorting!!! Woohooo!!! \n Now proceeding on to 02_statistical_analysis script \n 
+##########################################")
+
+
+source_qmd(here("code", "02_statistical_analysis.qmd"), echo = TRUE)
+
+
+
+  

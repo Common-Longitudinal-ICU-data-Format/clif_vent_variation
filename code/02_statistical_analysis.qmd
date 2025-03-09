@@ -77,7 +77,6 @@ load_data_frames <- function(data_frame_names, output_dir = "output/intermediate
 
 # List of data frame names
 load(file.path("output/intermediate/clean_db/data_frames_to_save.Rdata"))
-
 data_frames_to_load <- data_frames_to_save
 
 # Call the function to load data frames
@@ -90,6 +89,7 @@ load_data_frames(data_frames_to_load)
   
 
 ```
+
 
 ## SBT
 ```{r}
@@ -1019,6 +1019,25 @@ model_data <- model_data %>%
 
 ```
 
+### Add FEV1, FVC, VFR using the GLI reference equations from rspiro for the included timepoints
+```{r}
+
+
+# first_intubation_data <- 
+#   first_intubation_data  %>%  mutate(
+#         FEV1 = case_when((race == "WHITE")~ pred_GLI(age, height/100, gender = gender12, ethnicity = 1, param = "FEV1"),
+#                           (race == "BLACK")~ pred_GLI(age, height/100, gender = gender12, ethnicity = 2, param = "FEV1"),
+#                           (race == "OTHER")~ pred_GLI(age, height/100, gender = gender12, ethnicity = 5, param = "FEV1")),
+#             FVC = case_when((race == "WHITE")~ pred_GLI(age, height/100, gender = gender12, ethnicity = 1, param = "FVC"),
+#                             (race == "BLACK")~ pred_GLI(age, height/100, gender = gender12, ethnicity = 2, param = "FVC"),
+#                             (race == "OTHER")~ pred_GLI(age, height/100, gender = gender12, ethnicity = 5, param = "FVC")),
+#         VFR = tidalvolume/(FVC * 10), 
+#         FEVFVC = FEV1/FVC
+#   )
+
+```
+
+
 
 ## Basic PF, SF, LAPS2, regression function / finalfit
 ```{r}
@@ -1235,7 +1254,7 @@ intubation_data <- df_oxygenation_index_analysis_prep_temp |>
 run_daily_analysis_for_variable_finalfit <- function(var_name, agg_func, interaction_term = FALSE) {
   
   ############   ############   ############ 
-  ############   mortality   ############ 
+  ############   mortality      ############ 
   ############   ############   ############ 
   message(paste("Processing variable:", var_name))
   
@@ -2594,6 +2613,168 @@ ggplot(all_predictions_binary, aes(x = height_inches, y = predicted, color = sex
 ```
 
 
+
+# Categorizing VT (Tidal Volume) per kg IBW into Bins
+```{r}
+run_vt_bin_analysis <- function(interaction_term = FALSE) {
+  
+  message("Running VT Bin Analysis for Mortality and VFDs...")
+
+  # ---- Incorporate Lab Data ----
+  vt_bin_data <- first_intubation_data %>%
+      # only hospitals that have enough traffic
+  filter(hospital_id %in% hospital_filter) |> 
+    filter(vent_episode_id == 1) %>%
+    mutate(vt_cckg = tidal_volume_set / ibw) %>%
+    mutate(vt_bin = case_when(
+      vt_cckg <  5  ~ "<5 cc/kg",
+      vt_cckg <  6  ~ "5-6 cc/kg",
+      vt_cckg <  7  ~ "6-7 cc/kg",
+      vt_cckg <  8  ~ "7-8 cc/kg",
+      vt_cckg <  9  ~ "8-9 cc/kg",
+      vt_cckg < 10  ~ "9-10 cc/kg",
+      vt_cckg < 11  ~ "10-11 cc/kg",
+      vt_cckg >= 11  ~ ">=11 cc/kg",
+      TRUE          ~ NA_character_
+    )) %>%
+    filter(!is.na(vt_bin)) %>%
+    left_join(clif_labs |> filter(lab_category %in% c("ph_arterial", "pco2_arterial")) |> 
+                  mutate(
+    recorded_date = date(lab_result_dttm),  # Extract date from recorded timestamp
+    recorded_hour = hour(lab_result_dttm)  # Extract hour from timestamp
+  ) |> 
+    mutate(
+      ph = fifelse(lab_category == "ph_arterial", lab_value_numeric, NA_real_),  # Assuming lab_name stores 'pH'
+      pco2 = fifelse(lab_category == "pco2_arterial", lab_value_numeric, NA_real_)  # Assuming lab_name stores 'pCO2_arterial'
+    ) |> 
+    dplyr::select(
+      clif_hospitalizations_joined_id,
+      recorded_date,
+      recorded_hour,
+      ph,
+      pco2
+    ), 
+  by = c("clif_hospitalizations_joined_id", "recorded_date", "recorded_hour")) |> 
+    filter(hospital_id %in% hospital_filter) 
+
+  # ---- Aggregate to Patient Level ----
+   # Get worst values in the first 24 hours
+  vt_bin_data_patient <- vt_bin_data |> 
+    filter(vent_episode_hour_seq < 24) %>%
+    group_by(clif_hospitalizations_joined_id) %>%
+    dplyr::summarize(
+      vt_bin = ffirst(vt_bin),
+      age_at_admission = ffirst(age_at_admission),
+      sex_category = ffirst(sex_category),
+      hospital_id = ffirst(hospital_id),
+      mortality_enc = ffirst(mortality_enc),
+      vent_episode_duration_hours = ffirst(vent_episode_duration_hours),
+      
+      # Get worst values for lab parameters
+      worst_pf_ratio = fmin(pf_ratio, na.rm = TRUE),
+      worst_sf_ratio = fmin(sf_ratio, na.rm = TRUE),
+      worst_laps2 = fmax(laps2, na.rm = TRUE),
+      worst_ph = min(ph, na.rm = TRUE),
+      worst_pco2 = max(pco2, na.rm = TRUE),
+      
+      # Total ventilator days
+      total_ventilator_days = max(vent_episode_hour_seq, na.rm = TRUE) / 24
+    ) %>%
+    
+    # Ensure no missing lab values (replace with median if needed)
+    mutate(across(c(worst_pf_ratio, worst_sf_ratio, worst_laps2, worst_ph, worst_pco2),
+                  ~ replace_na(., median(., na.rm = TRUE)))) %>%    
+    mutate(across(c(worst_pf_ratio, worst_sf_ratio, worst_laps2, worst_ph, worst_pco2),
+                  ~ replace_inf(., median(., na.rm = TRUE)))) %>%
+    
+    # Calculate Ventilator-Free Days (VFDs)
+    mutate(VFDs = case_when(
+      mortality_enc == 1 ~ 0,                        # If the patient died, VFDs = 0
+      total_ventilator_days >= 28 ~ 0,               # If ventilated for >=28 days, VFDs = 0
+      TRUE ~ 28 - total_ventilator_days              # Otherwise, VFDs = 28 - total ventilator days
+    ))
+
+
+  # ---- Mortality Model ----
+  mortality_formula <- "mortality_enc ~ vt_bin + age_at_admission + sex_category + worst_laps2 + worst_pf_ratio + worst_sf_ratio + worst_ph + worst_pco2"
+  if (hosp_id_count > 1) mortality_formula <- paste(mortality_formula, "+ hospital_id")
+
+  mortality_model <- glm(as.formula(mortality_formula), data = vt_bin_data_patient, family = binomial())
+
+  mortality_results <- broom::tidy(mortality_model, conf.int = TRUE, exponentiate = TRUE) %>%
+    mutate(variable = "mortality_vt_bin", site = site_name)
+
+  suffix <- ifelse(interaction_term, "interaction", "no_interaction")
+  mortality_filename <- paste0("output/final/model_coefs_mortality_vt_bin__", suffix, "__", site_name, "_", Sys.Date(), ".csv")
+  write.csv(mortality_results, file = mortality_filename, row.names = FALSE)
+  message("Saved mortality VT bin coefficients!")
+
+  # ---- VFD Model ----
+  vfd_formula <- "VFDs ~ vt_bin + age_at_admission + sex_category + worst_laps2 + worst_pf_ratio + worst_sf_ratio + worst_ph + worst_pco2"
+  if (hosp_id_count > 1) vfd_formula <- paste(vfd_formula, "+ hospital_id")
+
+  vfd_model <- glm(as.formula(vfd_formula), data = vt_bin_data_patient, family = poisson())
+
+  vfd_results <- broom::tidy(vfd_model, conf.int = TRUE, exponentiate = TRUE) %>%
+    mutate(variable = "vfd_vt_bin", site = site_name)
+
+  vfd_filename <- paste0("output/final/model_coefs_vfd_vt_bin__", suffix, "__", site_name, "_", Sys.Date(), ".csv")
+  write.csv(vfd_results, file = vfd_filename, row.names = FALSE)
+  message("Saved VFD VT bin coefficients!")
+
+  # ---- Sensitivity Analyses ----
+
+  ## 1. **Exclude Early Deaths (first 48 hours)**
+  vt_bin_data_exclude_early_death <- vt_bin_data_patient %>%
+    filter(vent_episode_duration_hours >= 48)
+
+  mortality_model_early <- glm(as.formula(mortality_formula), data = vt_bin_data_exclude_early_death, family = binomial())
+  mortality_results_early <- broom::tidy(mortality_model_early, conf.int = TRUE, exponentiate = TRUE) %>%
+    mutate(variable = "mortality_vt_bin_exclude_early", site = site_name)
+
+  mortality_filename_early <- paste0("output/final/model_coefs_mortality_vt_bin_exclude_early__", suffix, "__", site_name, "_", Sys.Date(), ".csv")
+  write.csv(mortality_results_early, file = mortality_filename_early, row.names = FALSE)
+
+  ## 2. **Survivors-Only Analysis**
+  vt_bin_data_survivors <- vt_bin_data_patient %>%
+    filter(mortality_enc == 0)
+
+  vfd_survivor_model <- glm(as.formula(vfd_formula), data = vt_bin_data_survivors, family = poisson())
+
+  vfd_survivor_results <- broom::tidy(vfd_survivor_model, conf.int = TRUE, exponentiate = TRUE) %>%
+    mutate(variable = "vfd_survivors_vt_bin", site = site_name)
+
+  vfd_survivor_filename <- paste0("output/final/model_coefs_vfd_survivors_vt_bin__", suffix, "__", site_name, "_", Sys.Date(), ".csv")
+  write.csv(vfd_survivor_results, file = vfd_survivor_filename, row.names = FALSE)
+  message("Saved VFD VT bin coefficients for survivors!")
+
+  ## 3. **Exclude patients with short ventilation duration (<24 hours)**
+  vt_bin_data_24hr <- vt_bin_data_patient %>%
+    filter(vent_episode_duration_hours >= 24)
+
+  mortality_model_24hr <- glm(as.formula(mortality_formula), data = vt_bin_data_24hr, family = binomial())
+
+  mortality_results_24hr <- broom::tidy(mortality_model_24hr, conf.int = TRUE, exponentiate = TRUE) %>%
+    mutate(variable = "mortality_vt_bin_24hr", site = site_name)
+
+  mortality_filename_24hr <- paste0("output/final/model_coefs_mortality_vt_bin_24hr__", suffix, "__", site_name, "_", Sys.Date(), ".csv")
+  write.csv(mortality_results_24hr, file = mortality_filename_24hr, row.names = FALSE)
+
+  message("All sensitivity analyses saved!")
+
+  return(list(mortality = mortality_results, vfd = vfd_results, vfd_survivors = vfd_survivor_results))
+}
+
+# Run analysis
+run_vt_bin_analysis(interaction_term = FALSE)
+
+
+```
+
+
+
+
+
 ############## THE END OF REAL ANALYSIS
 # IN PRODUCTION 
 
@@ -2761,6 +2942,8 @@ ggsurvplot(km_oi_fit, data = OI_analysis_test,
 
 }
 ```
+
+
 
 ```{r}
 
