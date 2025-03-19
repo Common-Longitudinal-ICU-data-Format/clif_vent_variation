@@ -262,6 +262,7 @@ source("utils/config.R")
 site_name <- config$site_name
 tables_path <- config$tables_path
 file_type <- config$file_type
+time_zone <- Sys.timezone()
 
 
 # Print the configuration parameters
@@ -421,27 +422,46 @@ vitalwarning <- function() {
 
 read_data <- function(file_path) {
   file_path_temp <- paste0(tables_path,"/", file_path, ".", file_type)
+  local_tz = Sys.timezone()
   print(file_path_temp)
+  print(local_tz)
   
   if (grepl("\\.csv$", file_path_temp)) {
     return(read.csv(file_path_temp) |> 
-             mutate(across(ends_with("_id"), as.character))
+             mutate(across(ends_with("_id"), as.character)) |> 
+             mutate(across(where(~ inherits(.x, c("POSIXct", "POSIXlt"))),
+                           ~ with_tz(.x, local_tz))) |> 
+             ## make sure DATES are DATES
+             mutate(across(ends_with("_date"), ~ as.Date(.x))) |> 
+             mutate(across(starts_with("date_"), ~ as.Date(.x))) 
     )
     
   } else if (grepl("\\.parquet$", file_path_temp)) {
     return(arrow::open_dataset(file_path_temp)  |> 
              mutate(across(ends_with("_id"), as.character)) |> 
+             mutate(across(where(~ inherits(.x, c("POSIXct", "POSIXlt"))),
+                           ~ with_tz(.x, local_tz))) |>
+             ## make sure DATES are DATES
+             mutate(across(ends_with("_date"), ~ as.Date(.x))) |> 
+             mutate(across(starts_with("date_"), ~ as.Date(.x))) |> 
              collect()
     )
     
   } else if (grepl("\\.fst$", file_path_temp)) {
     return(fst::read.fst(file_path_temp) |> 
-             mutate(across(ends_with("_id"), as.character))
+             mutate(across(ends_with("_id"), as.character)) |> 
+             mutate(across(where(~ inherits(.x, c("POSIXct", "POSIXlt"))),
+                           ~ with_tz(.x, local_tz))) |> 
+             ## make sure DATES are DATES
+             mutate(across(ends_with("_date"), ~ as.Date(.x))) |> 
+             mutate(across(starts_with("date_"), ~ as.Date(.x))) 
     )
   } else {
     stop("Unsupported file format")
   }
 }
+
+
 
 # for quick opening and filtering...
 #     ni_open_dataset_clif(adt) |> filter(patient_id == "asdf") |> collect() |> View()
@@ -449,7 +469,12 @@ ni_open_dataset_clif <- function(file){
   file_quoted <- deparse(substitute(file))
   open_dataset(paste0(tables_path, "/",  "clif_", file_quoted, ".parquet"), thrift_string_size_limit = 1000000000) |> 
     mutate(across(where(is.character), as.character)) |> 
-    mutate(across(where(is.character), str_to_lower)) 
+    mutate(across(where(is.character), str_to_lower)) |> 
+    mutate(across(where(~ inherits(.x, c("POSIXct", "POSIXlt"))),
+                  ~ with_tz(.x, local_tz))) |> 
+    ## make sure DATES are DATES
+    mutate(across(ends_with("_date"), ~ as.Date(.x))) |> 
+    mutate(across(starts_with("date_"), ~ as.Date(.x))) 
 }
 
 ## Date range
