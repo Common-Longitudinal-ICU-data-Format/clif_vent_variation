@@ -1483,7 +1483,7 @@ df_hourly_resp_support <- df_hourly_resp_support2 |>
 
 # 
 # 
-# write_parquet(df_hourly_resp_support, paste0("output/intermediate/df_hourly_resp_support_", Sys.Date(), ".parquet"))
+# write_parquet_tz(df_hourly_resp_support, paste0("output/intermediate/df_hourly_resp_support_", Sys.Date(), ".parquet"))
 # 
 # # saving system date today
 # most_recent_save_hourly <- Sys.Date()
@@ -2626,7 +2626,7 @@ save_data_frames <- function(data_frame_names, output_dir = "output/intermediate
       output_file <- file.path(output_dir, paste0(df_name, "_.", Sys.Date(), ".parquet"))
       
       # Save the data frame to Parquet
-      arrow::write_parquet(df, output_file)
+      write_parquet_tz(df, output_file)
       
       # Optional: Print a message
       message("Saved ", df_name, " to ", output_file)

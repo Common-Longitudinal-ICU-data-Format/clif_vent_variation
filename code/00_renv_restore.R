@@ -262,13 +262,26 @@ source("utils/config.R")
 site_name <- config$site_name
 tables_path <- config$tables_path
 file_type <- config$file_type
-time_zone <- Sys.timezone()
+time_zone <- config$time_zone
+
+
+valid_time_zones <- c('US/Alaska', 'US/Aleutian', 'US/Arizona', 'US/Central', 'US/East-Indiana', 'US/Eastern', 'US/Hawaii', 'US/Indiana-Starke', 'US/Michigan', 'US/Mountain', 'US/Pacific', 'US/Samoa')
+
+if (is.null(time_zone) || !(time_zone %in% valid_time_zones)) {
+  stop(paste0("Please update the config script to specify a valid time_zone. ",
+              "Valid options are: ", paste(valid_time_zones, collapse = ", "), "."))
+} else {
+  message(paste("Using time zone:", time_zone))
+}
+
+
 
 
 # Print the configuration parameters
 print(paste("Site Name:", site_name))
 print(paste("Tables Path:", tables_path))
 print(paste("File Type:", file_type))
+print(paste("Time Zone:", time_zone))
 
 
 
@@ -422,7 +435,7 @@ vitalwarning <- function() {
 
 read_data <- function(file_path) {
   file_path_temp <- paste0(tables_path,"/", file_path, ".", file_type)
-  local_tz = Sys.timezone()
+  local_tz = time_zone
   print(file_path_temp)
   print(local_tz)
   
@@ -477,6 +490,34 @@ ni_open_dataset_clif <- function(file){
     mutate(across(starts_with("date_"), ~ as.Date(.x))) 
 }
 
+
+
+### Make sure to save in UTC
+write_parquet_tz <- function(df, file_path) {
+  # Identify datetime columns
+  datetime_cols <- names(df)[sapply(df, function(col) inherits(col, c("POSIXct", "POSIXlt")))]
+  
+  if (length(datetime_cols) > 0) {
+    df <- df %>%
+      mutate(across(all_of(datetime_cols), ~ with_tz(., "UTC")))  # Attach UTC correctly
+    
+    # df <- as_arrow_table(df) 
+    
+    message("Stored timestamps correctly in UTC for columns: ", 
+            paste(datetime_cols, collapse = ", "))
+  } else {
+    # df <- as_arrow_table(df)
+    message("No datetime columns required conversion.")
+  }
+  
+  # Write to Parquet
+  arrow::write_parquet(df, file_path)
+  
+  message("Saved ", file_path, " successfully.")
+}
+
+
+
 ## Date range
 start_date <- "2018-01-01"
 end_date <- "2024-09-30"
@@ -504,16 +545,16 @@ You have completed setup!!! Woohooo!!! \n Now proceeding on to 01_cohorting scri
 
 # Example usage: 
 # Assuming "my_data_analysis.qmd" is the .qmd file you want to source
-source_qmd(here("code", "01_cohorting.qmd"), echo = TRUE)
+# source_qmd(here("code", "01_cohorting.qmd"), echo = TRUE)
+
+# 
+# 
+# message("##########################################
+# You have completed Cohorting!!! Woohooo!!! \n Now proceeding on to 02_statistical_analysis script \n 
+# ##########################################")
 
 
-
-message("##########################################
-You have completed Cohorting!!! Woohooo!!! \n Now proceeding on to 02_statistical_analysis script \n 
-##########################################")
-
-
-source_qmd(here("code", "02_statistical_analysis.qmd"), echo = TRUE)
+# source_qmd(here("code", "02_statistical_analysis.qmd"), echo = TRUE)
 
 
 

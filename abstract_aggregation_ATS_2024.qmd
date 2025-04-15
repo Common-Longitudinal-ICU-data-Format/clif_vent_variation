@@ -37,6 +37,22 @@ if(!exists("site_name")) {
 
 ```{r}
 
+
+# Ensure needed directories exist for outputs
+output_dirs <- c(
+  "aggregate_data/presentation_outputs",
+  "aggregate_data/presentation_outputs/interaction_plots",
+  "aggregate_data/presentation_outputs/variability_metrics",
+  "aggregate_data/presentation_outputs/regression_results",
+  "aggregate_data/presentation_outputs/descriptive_tables"
+)
+
+lapply(output_dirs, function(dir) {
+  if (!dir.exists(dir)) dir.create(dir, recursive = TRUE)
+})
+
+
+
 # Step 1: List all CSV files in the directory
 files <- list.files(path = "aggregate_data", pattern = "\\.csv$", full.names = TRUE, recursive = TRUE)
 
@@ -378,7 +394,7 @@ model_names <- c(
 )
 
 # View the combined dataset
-combined_model_coefs_sex <- combined_model_coefs_sex |> 
+combined_model_coefs_sex_clean <- combined_model_coefs_sex |> 
     mutate(significant = ifelse(PValue < 0.05, "Yes", "No")) |> 
     mutate(group = fifelse(str_detect(StudyID, "bin"), "Vt > 8cc/kg (OR)", "Vt cc/kg (Coef)"),
          Estimate = ifelse(str_detect(StudyID, "bin"), exp(Estimate), Estimate),
@@ -387,37 +403,74 @@ combined_model_coefs_sex <- combined_model_coefs_sex |>
   mutate(
     Model_Simple = factor(Model, levels = c(
       "Male ~ HTVV (Binary)",
-      "Male ~ Vt",
       "Male + Height ~ HTVV (Binary)",
-      "Male + Height ~ Vt",
       "Male * Height ~ HTVV (Binary)",
-      "Male * Height ~ Vt",
       "Male * rcs(Height) ~ HTVV (Binary)",
+      "Male ~ Vt",
+      "Male + Height ~ Vt",
+      "Male * Height ~ Vt",
       "Male * rcs(Height) ~ Vt"
     ),
                           labels = c(
-                            "m_htvv", "m_vt", 
-                            "m_h_htvv", "m_h_vt",
-                            "m_hx_htvv", "m_hx_vt", 
-                            "m_rcs_hx_htvv", "m_rcs_hx_vt"
-                          )))
+                            "m_htvv", 
+                            "m_h_htvv", 
+                            "m_hx_htvv", 
+                            "m_rcs_hx_htvv", 
+                            "m_vt", 
+                            "m_h_vt",
+                            "m_hx_vt", 
+                            "m_rcs_hx_vt"
+                          ), ordered = TRUE))
 
-
-
+model_order <- c(
+  "Male ~ HTVV (Binary)",
+  "Male + Height ~ HTVV (Binary)",
+  "Male * Height ~ HTVV (Binary)",
+  "Male ~ Vt",
+  "Male + Height ~ Vt",
+  "Male * Height ~ Vt"
+)
 #Assuming your combined dataset `combined_model_coefs_sex` has columns:
 # "StudyID" for different models, "Site" for different sites, "Estimate", "LowerCI", and "UpperCI".
-combined_model_coefs_sex_plot <-  combined_model_coefs_sex |> 
+
+# # set a threshold for max absolute value of confidence interval
+threshold <- 10  # adjust as appropriate for your context
+
+
+combined_model_coefs_sex_plot <-  combined_model_coefs_sex_clean |>
+  filter(Site != "EU") |> 
   mutate(Site = str_to_lower(Site)) |> 
   left_join(system_hospital |> select(system, site) |> distinct(),
             by = join_by(Site == site)) |> 
-  filter(!str_detect(Model, "rcs")) |>
-
+  filter(!str_detect(Model, "rcs"))  |> 
+  filter(abs(LowerCI) < threshold & abs(UpperCI) < threshold) |> 
+  filter(Model %in% c(
+  "Male ~ HTVV (Binary)",
+  "Male + Height ~ HTVV (Binary)",
+  # "Male * Height ~ HTVV (Binary)",
+  "Male ~ Vt",
+  "Male + Height ~ Vt",
+  # "Male * Height ~ Vt",
+  ""
+)) |> 
+  
   filter(Variable == "sex_categorymale") |>
   ggplot(aes(x = Estimate, y = system, color = Model, shape = significant)) +
   geom_point(position = position_dodge(width = 0.6), size = 4) +  # Plot the point estimates
   geom_errorbarh(aes(xmin = LowerCI, xmax = UpperCI), 
                  position = position_dodge(width = 0.6), height = 0.25, size = 0.8) +  # Error bars with smaller height and thicker line
-  facet_grid(~group, scales = "free_x")+
+  facet_grid(~group, scales = "free_x") +
+  
+  
+  # Add reference line at OR=1 ONLY for OR facet
+  geom_vline(data = tibble(group = "Vt > 8cc/kg (OR)", vline = 1),
+             aes(xintercept = vline),
+             linetype = "dashed", linewidth = 0.7, color = "gray50") +
+  # Add reference line at Coef=0 ONLY for Coef facet
+  geom_vline(data = tibble(group = "Vt cc/kg (Coef)", vline = 0),
+             aes(xintercept = vline),
+             linetype = "dashed", linewidth = 0.7, color = "gray50") +
+  
   labs(x = "Estimate for Male", y = "Site", color = "Model (StudyID)") +
   theme_bw(12) +
   theme(
@@ -427,12 +480,16 @@ combined_model_coefs_sex_plot <-  combined_model_coefs_sex |>
     legend.position = "right",  # Move legend to the right for clarity
     panel.grid.major.y = element_blank()  # Remove major y grid lines for a cleaner look
   ) +
-  scale_colour_brewer(palette = "RdBu", direction = 1)
+  scale_colour_brewer(palette = "RdBu", direction = 1, breaks = model_order)
   # scale_color_manual(values = c("#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"))  # Customize colors if needed
+
+combined_model_coefs_sex_plot
+
+ggsave("aggregate_data/presentation_outputs/interaction_plots/sex_height_interaction_by_system.png", combined_model_coefs_sex_plot, width = 8, height = 6)
 
 
 # Getting male estimates
-male_estimates <- combined_model_coefs_sex |> 
+male_estimates <- combined_model_coefs_sex_clean |> 
 filter(Variable == "sex_categorymale") |> 
 filter(Site != "EU") |> 
   summarise(mean_male_estimate = mean(Estimate, na.rm = TRUE),
@@ -443,14 +500,14 @@ filter(Site != "EU") |>
 
 male_estimates
 
-significant_m_vt <- combined_model_coefs_sex |> 
+significant_m_vt <- combined_model_coefs_sex_clean |> 
   filter(Variable == "sex_categorymale") |> 
   filter(Site != "EU") |> 
   filter(Model_Simple == "m_vt") |> 
   filter(significant == "Yes") |> 
   nrow() 
 
-significant_m_h_vt <- combined_model_coefs_sex |> 
+significant_m_h_vt <- combined_model_coefs_sex_clean |> 
   filter(Variable == "sex_categorymale") |> 
   filter(Site != "EU") |> 
   filter(Model_Simple == "m_h_vt") |> 
@@ -459,13 +516,13 @@ significant_m_h_vt <- combined_model_coefs_sex |>
 
 
 #mediation analysis
-coef_m_vt <- combined_model_coefs_sex |> 
+coef_m_vt <- combined_model_coefs_sex_clean |> 
   filter(Variable == "sex_categorymale") |> 
   filter(Site != "EU") |> 
   filter(Model_Simple == "m_vt") |> 
   select(est_m_vt = Estimate, Site)
 
-coef_m_h_vt <- combined_model_coefs_sex |> 
+coef_m_h_vt <- combined_model_coefs_sex_clean |> 
   filter(Variable == "sex_categorymale") |> 
   filter(Site != "EU") |> 
   filter(Model_Simple == "m_h_vt") |>  
@@ -484,12 +541,13 @@ mediation_vt_max <- mediation_vt |> filter(mediation <1) |> pull() |> max()
 ```{r}
 
 # Create height quantiles
-height_breaks <- c(0, 60, 63, 66, 69, 72, 100)  # Corresponds to < 5 feet, 5-5’3”, 5’3”-5’6”, ..., >6’3”
+height_breaks <- c(54, 60, 63, 66, 69, 72, 80)  # Corresponds to < 5 feet, 5-5’3”, 5’3”-5’6”, ..., >6’3”
 height_labels <- c("< 5 feet", "5-5’3”", "5’3”-5’6”", "5’6”-5’9”", "5’9”-6’0”", "> 6’3”")
 
 
 min_height <- round(min(model_preds_sex_category_height_ltvv$height_inches, na.rm = TRUE))
 max_height <- round(max(model_preds_sex_category_height_ltvv$height_inches, na.rm = TRUE))
+
 
 
 model_preds_sex_category_height_ltvv <-  model_preds_sex_category_height_ltvv |> 
@@ -522,23 +580,37 @@ model_preds_sex_category_height_ltvv <-  model_preds_sex_category_height_ltvv |>
 all_predictions_continuous <- model_preds_sex_category_height_ltvv |> 
   filter(!str_detect(Model, "Binary"))
 
+# For continuous models
+continuous_model_order <- c(
+  "Male ~ Vt",
+  "Male + Height ~ Vt",
+  "Male * Height ~ Vt"
+)
 
 
 # Plot all models together
 all_predictions_continuous_plot <- all_predictions_continuous |> 
+    mutate(
+    Model = factor(Model, levels = continuous_model_order),
+    sex_category = str_to_title(sex_category)
+  ) |> 
+    mutate(sex_category = str_to_title(sex_category)) |> 
   ggplot(aes(x = height_inches, y = predicted, color = sex_category, group = interaction(health_system, sex_category))) +
   geom_line(size = 1) +
+    geom_ribbon(aes(ymin = conf.low, ymax = conf.high, fill = sex_category), alpha = 0.2, color = NA) +
+
   # facet_wrap(~ Model) +
-    facet_grid(health_system ~ Model) +
+    facet_grid(health_system ~ Model, scales = "free_y") +
   labs(
-    title = "Predicted VT per kg IBW by Height and Sex Category",
+    title = "Predicted VT per kg PBW by Height and Sex Category",
     x = "Height (inches)",
-    y = "Predicted VT per kg IBW",
-    color = "Sex Category"
+    y = "Predicted VT per kg PBW",
+    color = "Sex Category",
+    fill = "Sex Category"
   ) +
     scale_x_continuous(
     limits = c(min_height, max_height),
-    breaks = height_breaks,
+    breaks = seq(min_height, max_height, by = 3),
     minor_breaks = NULL  # Remove minor grid lines if desired
   ) +
   theme_minimal() +
@@ -549,6 +621,8 @@ all_predictions_continuous_plot <- all_predictions_continuous |>
   )
 
 all_predictions_continuous_plot
+ggsave("aggregate_data/presentation_outputs/interaction_plots/continuous_sex_height_interaction.png",
+       all_predictions_continuous_plot, width = 12, height = 9)
 
 # Ensure Model is a factor
 all_predictions_binary <- model_preds_sex_category_height_ltvv |> 
@@ -557,20 +631,34 @@ all_predictions_binary <- model_preds_sex_category_height_ltvv |>
 
 
 
+# For binary models
+binary_model_order <- c(
+  "Male ~ HTVV (Binary)",
+  "Male + Height ~ HTVV (Binary)",
+  "Male * Height ~ HTVV (Binary)"
+)
+
 # Plot all models together
 all_predictions_binary_plot <- all_predictions_binary |> 
+    mutate(
+    Model = factor(Model, levels = binary_model_order),
+    sex_category = str_to_title(sex_category)
+  ) |> 
+    mutate(sex_category = str_to_title(sex_category)) |> 
   ggplot(aes(x = height_inches, y = predicted, color = sex_category, group = interaction(health_system, sex_category))) +
   geom_line(size = 1) +
-  facet_grid(health_system ~ Model) +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high, fill = sex_category), alpha = 0.2, color = NA) +
+  facet_grid(health_system ~ Model,  scales = "free_y") +
   labs(
     title = "Predicted VT per kg IBW by Height and Sex Category",
     x = "Height (inches)",
     y = "Predicted VT per kg IBW",
-    color = "Sex Category"
+    color = "Sex Category",
+    fill = "Sex Category"
   ) +
     scale_x_continuous(
     limits = c(min_height, max_height),
-    breaks = height_breaks,
+    breaks = seq(min_height, max_height, by = 3),
     minor_breaks = NULL  # Remove minor grid lines if desired
   ) +
   theme_minimal() +
@@ -581,7 +669,8 @@ all_predictions_binary_plot <- all_predictions_binary |>
   )
 
 all_predictions_binary_plot
-
+ggsave("aggregate_data/presentation_outputs/interaction_plots/binary_sex_height_interaction.png",
+       all_predictions_binary_plot, width = 12, height = 9)
 
 
 
@@ -607,6 +696,30 @@ weighted_means_m <- weighted_means |> filter(sex_category == "male") |> pull(wei
 weighted_means
 abs_difference
 
+
+# Weighted means summary table
+weighted_means_summary <- weighted_means |> 
+  pivot_wider(names_from = sex_category, values_from = weighted_tidal_volume) |> 
+  mutate(abs_difference = abs(male - female))
+
+
+weighted_means_summary |> 
+  gt() |> 
+  tab_header(
+    title = "Weighted Average Tidal Volumes by Sex",
+    subtitle = "Across All Health Systems"
+  ) |> 
+  cols_label(
+    female = "Female (cc/kg IBW)",
+    male = "Male (cc/kg IBW)",
+    abs_difference = "Absolute Difference"
+  ) |> 
+  fmt_number(columns = everything(), decimals = 3) |> 
+  tab_options(
+    heading.background.color = "#eaf2f8",
+    table.font.size = 14
+  ) |> 
+  gtsave("aggregate_data/presentation_outputs/descriptive_tables/weighted_means_summary.html")
 
 ```
 
@@ -1091,7 +1204,7 @@ ggplot(aes(x = term, y = estimate, ymin = conf.low, ymax = conf.high, color = va
 # ggsave("output/final/variables_across_sites.png", width = 10, height = 8, dpi = 300)
 ```
 
-## Effect of High Tidal Volume Ventilation
+## Effect of High Tidal Volume Ventilation on Outcomes (Daily)
 
 **htvv_daily_percent** = hours with set volume \> 8cc/ibw / ventilator
 hours that day
@@ -1110,25 +1223,152 @@ htvv_models <- combined_model_coefs_daily_mort |>
          UpperCI_transformed = ifelse(!str_detect(source, "vfd"), exp(conf.high), conf.high))
 
 htvv_models_plot <- htvv_models |> 
+    group_by(group) |> 
+  mutate(site = fct_reorder(site, Estimate_transformed)) |> 
+  ungroup() |> 
+  filter(site != "EU") |> 
+    mutate(
+    term = recode(term,
+                  "htvv_daily_percent" = "High TV % (per day)",
+                  .default = term)
+  ) |> 
   ggplot(aes(x = Estimate_transformed, y = site, color = term)) +
   geom_point(position = position_dodge(width = 0.6), size = 4) +  # Plot the point estimates
   geom_errorbarh(aes(xmin = LowerCI_transformed, xmax = UpperCI_transformed), 
                  position = position_dodge(width = 0.6), height = 0.25, size = 0.8) +  # Error bars with smaller height and thicker line
   facet_wrap(~group, scales = "free_x") +
-  labs(x = "Estimate", y = "Site", color = "Model (StudyID)") +
-    theme_bw(base_size = 12) +
+  labs(x = "Estimate", y = "Site", color = "Model (StudyID)",
+       title = "Association Between High Tidal Volume Exposure and Outcomes",
+       subtitle = bquote(atop(
+         italic("Models adjusted for: Admit PFR, Daily PFR, age, sex, day, hospital"),
+         italic("Exposure: htvv_daily_percent = % of hours with Vt > 8 cc/kg IBW")))) +
+  
+  
+  theme_bw(base_size = 12) +
   theme(
     axis.text.y = element_text(size = 12),
     axis.title.x = element_text(size = 14),
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(face = "italic", size = 11),
     strip.text = element_text(size = 14, face = "bold"),  # Customize facet titles
     legend.position = "right",  # Move legend to the right for clarity
     # panel.grid.major.y = element_blank()  # Remove major y grid lines for a cleaner look
   ) +
-  scale_colour_brewer(palette = "RdBu", direction = 1)
+  scale_colour_brewer(palette = "RdBu", direction = 1) +
+  
+    geom_vline(data = tibble(group = c("Mortality (OR)", "Vent Free Days (Coef)"),
+                           vline = c(1, 0)),
+             aes(xintercept = vline), linetype = "dashed", color = "gray50") 
 
+htvv_models_plot
 
+ggsave("aggregate_data/presentation_outputs/regression_results/htvv_patient_outcomes.png",
+       htvv_models_plot, width = 12, height = 9)
   
 ```
+
+## Effect of high tidal volume (bins)
+```{r}
+# Step 1: Load all mortality bin models
+mort_bin_objects <- mget(ls(pattern = "^model_coefs_mortality_vt_bin_exclude"))
+
+vt_bin_levels <- c(
+  "5-6 cc/kg", "6-7 cc/kg", "7-8 cc/kg", "8-9 cc/kg", 
+  "9-10 cc/kg", "10-11 cc/kg", ">=11 cc/kg"
+)
+
+# Step 2: Combine into one dataset
+combined_model_coefs_mort_bins <- bind_rows(mort_bin_objects, .id = "source") 
+
+# Step 3: Clean for plotting
+mortality_by_bin <- combined_model_coefs_mort_bins |>
+  filter(term != "(Intercept)") |>
+  filter(str_detect(term, "^vt_bin")) |>   # ✅ Only keep Vt bin predictors
+  mutate(
+    vt_bin = str_remove(term, "vt_bin"),
+    vt_bin = factor(vt_bin, levels = vt_bin_levels),
+    OR = exp(estimate),  # <-- transform here
+    CI_low = exp(conf.low),
+    CI_high = exp(conf.high)
+  ) |> 
+  mutate(vt_bin = factor(vt_bin, levels = vt_bin_levels))
+
+
+
+mortality_bin_plot <- ggplot(mortality_by_bin, aes(x = OR, y = vt_bin)) +
+  geom_point(color = "#d73027", size = 3) +
+  geom_errorbarh(aes(xmin = CI_low, xmax = CI_high), height = 0.2, color = "#d73027") +
+  geom_vline(xintercept = 1, linetype = "dashed", color = "gray40") +
+  labs(
+    title = "Mortality Risk by Tidal Volume Bin",
+    subtitle = bquote(atop(
+      italic("Model: mortality ~ vt_bin + age + sex + LAPS2 + P/F + S/F + pH + PCO2"),
+      italic("Reference: < 5 cc/kg IBW")
+    )),
+    x = "Odds Ratio (OR)",
+    y = "Tidal Volume Bin"
+  ) +
+  theme_bw(base_size = 13) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(face = "italic", size = 11, hjust = 0),
+    axis.text.y = element_text(size = 11),
+    axis.title = element_text(size = 12)
+  )
+
+ggsave("aggregate_data/presentation_outputs/regression_results/mortality_by_vt_bin.png", mortality_bin_plot, width = 9, height = 6)
+
+
+# Step 1: Load all VFD bin models
+vfd_bin_objects <- mget(ls(pattern = "^model_coefs_vfd_vt_bin"))
+
+# Step 2: Combine into one dataset
+combined_model_coefs_vfd_bins <- bind_rows(vfd_bin_objects, .id = "source")
+
+
+# Step 3: Clean for plotting
+vfd_by_bin <- combined_model_coefs_vfd_bins |>
+  filter(term != "(Intercept)") |>
+  filter(str_detect(term, "^vt_bin")) |>
+  mutate(
+    vt_bin = str_remove(term, "vt_bin"),
+    Estimate = estimate,
+    CI_low = conf.low,
+    CI_high = conf.high,
+    vt_bin = fct_reorder(vt_bin, Estimate)
+  ) |> 
+  mutate(vt_bin = factor(vt_bin, levels = vt_bin_levels))
+
+vfd_bin_plot <- ggplot(vfd_by_bin, aes(x = Estimate, y = vt_bin)) +
+  geom_point(color = "#1b7837", size = 3) +
+  geom_errorbarh(aes(xmin = CI_low, xmax = CI_high), height = 0.2, color = "#1b7837") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray40") +
+  labs(
+    title = "Ventilator-Free Days by Tidal Volume Bin",
+    subtitle = bquote(atop(
+      italic("Model: VFD ~ vt_bin + age + sex + LAPS2 + P/F + S/F + pH + PCO2"),
+      italic("Reference: < 5 cc/kg IBW")
+    )),
+    x = "Difference in Mean VFDs",
+    y = "Tidal Volume Bin"
+  ) +
+  theme_bw(base_size = 13) +
+  theme_minimal(base_size = 13) +
+theme(
+  plot.title = element_text(face = "bold", size = 14),
+  plot.subtitle = element_text(face = "italic", size = 11, hjust = 0),
+  axis.text.y = element_text(size = 11),
+  axis.title = element_text(size = 12)
+)
+
+
+ggsave("aggregate_data/presentation_outputs/regression_results/vfd_by_vt_bin.png", vfd_bin_plot, width = 9, height = 6)
+
+
+```
+
+
 
 ## Abstract Writing
 
