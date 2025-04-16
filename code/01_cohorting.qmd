@@ -473,11 +473,11 @@ clif_adt <- import_df("clif_adt") |>
   filter(!is.na(location_category))
 
 
-# Count the number of encounters per hospital_id and assign "Hospital 1", "Hospital 2", etc.
-hospital_order <- clif_adt %>%
-  count(hospital_id, name = "encounters") %>%
-  arrange(desc(encounters)) %>%
-  mutate(hospital_label = paste0("Hospital ", site_name," ", row_number()))
+# # Count the number of encounters per hospital_id and assign "Hospital 1", "Hospital 2", etc.
+# hospital_order <- clif_adt %>%
+#   count(hospital_id, name = "encounters") %>%
+#   arrange(desc(encounters)) %>%
+#   mutate(hospital_label = paste0("Hospital ", site_name," ", row_number()))
 
 clif_adt <- clif_adt |> 
   left_join(hospital_order %>% dplyr::select(hospital_id, hospital_label), by = "hospital_id") |> 

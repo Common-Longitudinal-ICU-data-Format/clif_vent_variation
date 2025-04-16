@@ -1,0 +1,2855 @@
+## ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+## Loading in the beginning stuff
+if(!exists("site_name")) {
+  source("code/00_renv_restore.R")
+}
+ 
+
+
+## ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+start.time.full <- Sys.time()
+
+load_data_frames <- function(data_frame_names, output_dir = "output/intermediate/clean_db") {
+  # Ensure the output directory exists
+  if (!dir.exists(output_dir)) {
+    stop("The output directory does not exist: ", output_dir)
+  }
+  
+  # Load the date of the most recent save
+  date_file <- file.path(output_dir, "most_recent_save_resp.Rdata")
+  if (file.exists(date_file)) {
+    load(date_file)  # This will load 'most_recent_save_resp' variable
+  } else {
+    stop("The date file 'most_recent_save_resp.Rdata' does not exist in the output directory.")
+  }
+  
+  # Iterate over each data frame name
+  for (df_name in data_frame_names) {
+    # Check if the data frame exists in the global environment
+    if (!exists(df_name, envir = .GlobalEnv)) {
+      # Construct the input file path
+      input_file <- file.path(output_dir, paste0(df_name, "_.", most_recent_save_resp, ".parquet"))
+      
+      # Check if the file exists
+      if (file.exists(input_file)) {
+        # Load the data frame from Parquet
+        df <- arrow::read_parquet(input_file)
+        
+        # Assign the data frame to the global environment
+        assign(df_name, df, envir = .GlobalEnv)
+        
+        # Optional: Print a message
+        message("Loaded ", df_name, " from ", input_file)
+      } else {
+        warning("File '", input_file, "' does not exist. Cannot load data frame '", df_name, "'.")
+      }
+    } else {
+      message("Data frame '", df_name, "' already exists in the global environment. Skipping loading.")
+    }
+  }
+}
+
+
+# List of data frame names
+load(file.path("output/intermediate/clean_db/data_frames_to_save.Rdata"))
+data_frames_to_load <- data_frames_to_save
+
+# Call the function to load data frames
+load_data_frames(data_frames_to_load)
+
+
+ 
+  hosp_id_count <- df_hourly_resp_support |> count(hospital_id) |> nrow()
+  hospital_filter <- hospital_order |> pull()
+  
+
+
+
+## ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+
+sbt <- df_hourly_resp_support |> 
+  mutate(sbt = fifelse(mode_category == "pressure support/cpap", 
+                       1, 0)) |>
+  group_by(clif_hospitalizations_joined_id, recorded_date, sbt) |> 
+  mutate(pressure_support_set = fmin(pressure_support_set, na.rm = T)) |> 
+  mutate(peep_set = fmin(peep_set, na.rm = T)) |> 
+  
+  # currently treating NAs as if they are ok will still givea 1 if all are NA
+  mutate(sbt_relaxed = fcase(pressure_support_set >= 10, 0, default = sbt)) |> 
+  mutate(sbt_strict = fcase(pressure_support_set >= 8 |
+                              peep_set >= 1, 0, default = sbt_relaxed)) |> 
+  ungroup() |> 
+  
+  # fixing when NAs should be there (times when its not pressure support)
+  mutate(sbt_relaxed = fifelse(is.na(sbt), NA_real_, sbt_relaxed)) |> 
+  mutate(sbt_strict = fifelse(is.na(sbt), NA_real_, sbt_strict)) |> 
+  
+  # getting daily max
+  group_by(clif_hospitalizations_joined_id, recorded_date) |> 
+  mutate(sbt_relaxed = fmax(sbt_relaxed, na.rm = T)) |> 
+  mutate(sbt_strict = fmax(sbt_strict, na.rm = T)) |> 
+  mutate(sbt = fmax(sbt, na.rm = T)) |> 
+  ungroup() |> 
+  arrange(clif_hospitalizations_joined_id, recorded_date) |>
+  distinct(clif_hospitalizations_joined_id, recorded_date, sbt_relaxed, sbt_strict)  |> 
+  group_by(clif_hospitalizations_joined_id) |> 
+  mutate(hospital_day = row_number()) |> 
+  mutate(health_system = site_name) |> 
+  ungroup() |> 
+  count(health_system, hospital_day, sbt_relaxed, sbt_strict)
+
+write.csv(sbt, paste0("output/intermediate/sbt__",site_name, "_", Sys.Date(), ".csv"), row.names = FALSE)
+  
+
+
+
+## ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+##~~~~~~~~~~~~~
+##~~ Hospital Summary
+##~~~~~~~~~~~~~
+
+## data should be at the hourly level for each patient encounter
+# Calculate normalized counts
+mode_hospital_summary_table <- df_hourly_resp_support |> 
+  filter(device_category == "imv" & location_category == "icu") |> 
+  filter(!is.na(mode_category)) |> 
+  group_by(hospital_id) |> 
+  summarise(count = n()) |> 
+  # Normalizing counts
+  mutate(normalized_count = count / fmax(count, na.rm = TRUE),
+         # need to have NA in the data given its in the universal aesthetic
+         mode_category = NA)  |> 
+  arrange(-count) |> 
+  ungroup()
+
+write.csv(mode_hospital_summary_table, paste0("output/final/mode_hospital_summary_table__",site_name, "_", Sys.Date(), ".csv"), row.names = FALSE)
+
+
+##~~~~~~~~~~~~~
+##~~ Graph df
+##~~~~~~~~~~~~~
+
+mode_hourly_resp_support <- df_hourly_resp_support |> 
+    filter(
+      # recorded_year == 2019 &
+      device_category == "imv" &  
+        location_category == "icu"  # take out operating room ventilation
+    ) |> 
+    
+    filter(!is.na(mode_category)) |>   # only 0.7% for vent device
+   mutate(
+      mode_category = fct_infreq(mode_category),
+      hospital_id_graph = fct_infreq(hospital_id)
+    ) |> 
+  dplyr::select(hospital_id_graph, mode_category)
+
+mode_hourly_resp_support_table <- mode_hourly_resp_support |> 
+  count(hospital_id_graph, mode_category) |> 
+  mutate(health_system = site_name)
+  
+test_mode <- mode_hourly_resp_support_table |> 
+  uncount(n) 
+
+### A FINAL TABLE
+write.csv(mode_hourly_resp_support_table, paste0("output/final/mode_hourly_resp_support_table__",site_name, "_", Sys.Date(),".csv"), row.names = FALSE)
+
+
+
+## ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+# Nick will run the below on the table you saved with all data together
+# ... so no need to save the graph
+# Left the code  so you can explore your own data
+
+# Create a bar plot with ggplot2
+ggplot(
+  mode_hourly_resp_support,  aes(x = hospital_id_graph, fill = mode_category)) +
+  geom_bar(position = "fill") +
+  # Use labs to add a title and remove the axis labels
+  labs(title = "Ventilator Modes by Hospital", x = "Hospital", y = "Proportion of Mode Category") + 
+  # Use theme_minimal to create a minimal theme
+  theme_minimal() +
+  # adjusting tick marks for x axis
+  theme(axis.text.x = element_text(angle = 30, hjust = 1, vjust = 1)) +
+  # Add the summary data as a layer with a dummy aesthetic for color
+  geom_point(data = mode_hospital_summary_table, aes(x = hospital_id, y = normalized_count, color = "Total Counts"), size = 3) +
+  # Add horizontal lines at the height of each point, only spanning the width of the bar
+  geom_errorbar(data = mode_hospital_summary_table, aes(x = hospital_id, ymin = normalized_count, ymax = normalized_count, group = 1, color = "Total Counts"),
+                width = 0.9,  # Adjust this value to change the width of the horizontal lines
+                linewidth = 0.5) +  # Adjust size for line thickness
+  # geom_line(data = mode_hospital_summary_table, aes(x = hospital_id_graph, y = normalized_count, group = 1, color = "Total Counts"), linewidth = 1) +
+  # Customize the legend for the dummy aesthetic
+  scale_color_manual(name = "Legend", values = c("Total Counts" = "black"),
+                     labels = c("Total Counts" = "Total Mode Counts (Normalized)")) +
+  guides(fill = guide_legend(title = "Ventilator Mode Category", override.aes = list(color = NA)), 
+         color = guide_legend(title = "")) +
+  scale_fill_discrete(breaks = c("assist control-volume control", 
+                                 "pressure support/cpap", 
+                                 "pressure-regulated volume control",
+                                 "pressure control", 
+                                 "simv", 
+                                 "blow by"))
+
+
+
+
+
+
+
+
+## ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+ltvv_variation <- df_hourly_resp_support |> 
+  # keep only those on vent and exclude non-icu times
+  filter(device_category == "imv" & location_category == "icu") |> 
+  
+  # need at least 24 hours of ventilation
+  filter(vent_episode_duration_hours >= 24) |> 
+  
+  # filter down to a time
+  filter(vent_episode_hour_seq <= 24) |> 
+  
+  # getting Vt by ibw
+  mutate(vt_cckg = tidal_volume_set / ibw) |> 
+  
+  mutate(vt_bin = case_when(
+    vt_cckg <  4            ~"< 4 cc/kg",
+    vt_cckg <  5            ~"4-5 cc/kg",
+    vt_cckg <  6            ~"5-6 cc/kg",
+    vt_cckg <  7            ~"6-7 cc/kg",
+    vt_cckg <  8            ~"7-8 cc/kg",
+    vt_cckg <  9            ~"8-9 cc/kg",
+    vt_cckg <  10           ~"9-10 cc/kg",
+    vt_cckg <  11           ~"10-11 cc/kg",
+    vt_cckg <  12           ~"11-12 cc/kg",
+    vt_cckg >= 12           ~">= 12 cc/kg",
+    TRUE                    ~ NA_character_
+  )) |> 
+  
+  mutate(
+    vt_bin = factor(vt_bin, levels = rev(c("< 4 cc/kg", "4-5 cc/kg",
+                                           "5-6 cc/kg", "6-7 cc/kg",
+                                           "7-8 cc/kg" , "8-9 cc/kg",
+                                           "9-10 cc/kg", "10-11 cc/kg",
+                                           "11-12 cc/kg", ">= 12 cc/kg")))
+  ) |> 
+  
+  # remove those without tidal_volume_sets
+  filter(!is.na(tidal_volume_set))
+
+
+ltvv_variation_table <- ltvv_variation |> 
+  count(hospital_id, vt_bin) |> 
+  mutate(health_system = site_name)
+
+test_ltvv <- ltvv_variation_table |> 
+  uncount(n) 
+
+### A FINAL TABLE
+write.csv(ltvv_variation_table, paste0("output/final/ltvv_variation_table__",site_name,"_", Sys.Date(),".csv"), row.names = FALSE)
+
+
+## ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+# Nick will run the below on the table you saved with all data together
+# ... so no need to save the graph
+# Left the code  so you can explore your own data
+
+icu_hosp_ranks_8cc <- ltvv_variation |> 
+  group_by(hospital_id) |> 
+  mutate(count_hosp = n()) |> 
+  group_by(hospital_id, vt_bin, count_hosp) |> 
+  summarise(count_bin = n()) |> 
+  ungroup() |>
+  mutate(htvv = fcase(
+    vt_bin %in% c("8-9 cc/kg","9-10 cc/kg", "10-11 cc/kg", "11-12 cc/kg", ">= 12 cc/kg"), 1,
+    default = 0)) |> 
+  group_by(hospital_id) |> 
+  mutate(pct_over_8 = sum(htvv*count_bin) / count_hosp) |> 
+  dplyr::select(hospital_id, pct_over_8) |> 
+  distinct() |>
+  arrange(pct_over_8) |>  
+  pull(hospital_id)
+
+
+
+ltvv_variation |> 
+  filter(hospital_id %in% icu_hosp_ranks_8cc) |> 
+  mutate(hospital_id = factor(hospital_id, levels = rev(icu_hosp_ranks_8cc))) |> 
+  ggplot(aes(y = hospital_id, fill = vt_bin )) + 
+  geom_bar(position = "fill") + 
+  scale_fill_brewer(palette = "RdBu", direction = 1) +
+  ggthemes::theme_gdocs() + 
+  labs(x = "Percentage of patient-hours of volume control ventilation",
+       y = "Hospital",
+       fill = "")
+
+ggsave("output/intermediate/variation_in_vent_under_8cc_sort.pdf")
+
+
+
+
+
+## ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+#TABLE FUNCTIONS
+clif_med = function(v)
+{
+  a=  paste(round(median(v, na.rm = TRUE), digits =1), " (", deframe(round(quantile(v, na.rm = TRUE), digits =1)[2]), "-", deframe(round(quantile(v, na.rm = TRUE), digits = 1)[4]), ")", sep = "")
+  return(a)
+}
+
+clif_counts = function(v)
+{
+  a=  paste(sum(v, na.rm=TRUE), " (", round(mean(v, na.rm=TRUE)*100, digits=1), ")", sep = "")
+  return(a)
+}
+
+clif_mean_r = function(v)
+{
+  a=  paste(round(mean(v, na.rm = TRUE), digits=1), " (", round(sd(v, na.rm = TRUE), digits=1), ")", sep = "")
+  return(a)
+}
+
+
+clif_demographics_table_start <- df_hourly_resp_support |> 
+  dplyr::select(clif_hospitalizations_joined_id, tracheostomy, hospital_id, vent_episode_id, vent_episode_hospital_duration_hours) |> 
+  
+  # taking the first round of MV only
+  filter((vent_episode_id == 1)) |> 
+  dplyr::select(-vent_episode_id) |> 
+  distinct() |> 
+  
+  # bring in demographics
+  left_join(clif_demographics_combined) |> 
+  filter(!is.na(age_at_admission)) |> 
+  filter(!is.na(hospital_id)) |> 
+  # fix forward slashes in hospital
+  mutate(hospital_id = str_replace(hospital_id, "/", " ")) |> 
+  filter(sex_category %in% c("male", "female"))  |> 
+  mutate(race_category = fifelse(race_category == "unknown", "other", race_category)) |> 
+  mutate(death = as.integer(grepl("dead|expired|death|died", discharge_category, ignore.case = TRUE))) |> 
+  mutate(
+    
+    # fixing up race_category
+    race_f = 
+      fcase(
+        grepl("black|african[-]american", race_category, ignore.case = TRUE)   , "Black",
+        grepl("white|caucasian", race_category, ignore.case = TRUE)            , "White",
+        grepl("asian", race_category, ignore.case = TRUE)                      , "Asian",
+        default                                                                = "Other"
+      ),
+    
+    # fixing up ethnicity_category
+    ethnicity_f = 
+      fcase(
+        grepl("(non|not)[-\\s]*(hispanic|latino|latinx|hisp)", ethnicity_category, ignore.case = TRUE), "Non Hispanic",
+        default = "Hispanic"
+      )
+  ) |> 
+  
+  # getting max trach for encounter
+  group_by(clif_hospitalizations_joined_id) |> 
+  # mutate(tracheostomy = fmax(tracheostomy, na.rm = TRUE)) |> 
+  # mutate(tracheostomy = fifelse(tracheostomy == 1, 1, 0, 0)) |> 
+  ungroup() |> 
+  distinct() |> 
+  mutate(across(where(is.character), str_to_title)) |> 
+  mutate(across(where(is.character), as.factor))
+
+# hospitals <- clif_demographics_table_start |> dplyr::select(hospital_id) |> distinct() |> pull()
+# 
+# for (hosp in hospitals) {
+#   clif_demographics_table_start_hosp <- clif_demographics_table_start |> filter(hospital_id == hosp)
+#   # HTML content (make sure your actual HTML string is correctly input here)
+#   html_content <- table1(~ age + sex_category + race_category + ethnicity_category + death + vent_episode_hospital_duration_hours, data = clif_demographics_table_start_hosp)
+#   
+#   # Use rvest to read the HTML table
+#   table <- read_html(html_content) %>%
+#     html_table(fill = TRUE)
+#   
+#   # The first element of the list should be your table
+#   df <- table[[1]]
+#   
+#   # Rename 'Overall(N=14598)' to 'fabc(N=14598)' using the site variable
+#   names(df) <- gsub("Overall\\(N=(\\d+)\\)", paste0(hosp, ' ', "(N=\\1)"), names(df))
+#   write.csv(df, paste0("output/intermediate/table1_", hosp, '.csv'), row.names = FALSE)
+#   
+# }
+
+
+
+table_summary <- clif_demographics_table_start |>
+  group_by(hospital_id) |>
+  summarise(N = n(),
+            Age               = clif_mean_r(age_at_admission),
+            "Sex, Female"     = clif_counts(tolower(sex_category) == "female"),
+            Race              = "",
+            Black             = paste0("  ", clif_counts(race_f == "Black")),
+            White             = paste0("  ", clif_counts(race_f == "White")),
+            Asian             = paste0("  ", clif_counts(race_f == "Asian")),
+            Other             = paste0("  ", clif_counts(race_f == "Other")),
+            "Ethnicity, Hispanic"   = clif_counts(ethnicity_f == "Hispanic"),
+
+            "Ventilator Days" = clif_med(vent_episode_hospital_duration_hours/24),
+            "Mortality"       = clif_counts(death)
+  ) |>
+  mutate(hospital_id = str_to_title(hospital_id)) |>
+  rename(Hospital = hospital_id)
+
+
+characteristics <- colnames(table_summary)
+# table_summary <- as.data.frame(t(table_summary))
+# characteristics
+
+# leaving it without transposing it yet
+table_summary
+
+write.csv(table_summary, paste0("output/final/hospital_table1_summary__", site_name,"_", Sys.Date(),".csv"), row.names = FALSE)
+
+
+
+## ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+# Create height quantiles
+height_breaks <- c(0, 60, 63, 66, 69, 72, 100)  # Corresponds to < 5 feet, 5-5’3”, 5’3”-5’6”, ..., >6’3”
+height_labels <- c("< 5 feet", "5-5’3”", "5’3”-5’6”", "5’6”-5’9”", "5’9”-6’0”", "> 6’3”")
+
+clif_height <- clif_vitals |> filter(vital_category == "height_cm") |> 
+  arrange(clif_hospitalizations_joined_id, recorded_dttm) |>
+  dplyr::select(clif_hospitalizations_joined_id, height_cm = vital_value) |> 
+  filter(!is.na(height_cm)) |> 
+  mutate(height_inches = height_cm / 2.54) |> 
+    mutate(
+    height_quantile = cut(height_inches, breaks = height_breaks, labels = height_labels, include.lowest = TRUE)
+    ) |> 
+  distinct(clif_hospitalizations_joined_id, .keep_all = TRUE)
+
+
+ltvv_female <- ltvv_variation |> 
+  left_join(clif_demographics_combined |> dplyr::select(sex_category, clif_hospitalizations_joined_id) |> distinct()) |> 
+  filter(!sex_category == "unknown") |> 
+  left_join(clif_height) |> 
+  mutate(median_vt_ibw_patient = median(vt_cckg, na.rm = TRUE),
+         by = "clif_hospitalizations_joined_id")
+
+
+ltvv_female_table <- ltvv_female |> 
+  count(hospital_id, sex_category, vt_bin, height_quantile) |> 
+  mutate(health_system = site_name)
+
+test_ltvv_female_table <- ltvv_female_table |> 
+  uncount(n) 
+
+### A FINAL TABLE
+write.csv(ltvv_female_table, paste0("output/final/ltvv_female_table__",site_name,"_", Sys.Date(),".csv"), row.names = FALSE)
+  
+
+
+
+###### I will make this table with everyones data
+summary_data_bar <- ltvv_female_table %>%
+    filter(hospital_id %in% icu_hosp_ranks_8cc) |> 
+  mutate(hospital_id = factor(hospital_id, levels = rev(icu_hosp_ranks_8cc))) |> 
+  group_by(hospital_id, sex_category) %>%
+  mutate(
+    total_n = sum(n),
+    proportion = n / total_n
+  ) %>%
+  ungroup()
+
+
+# Define a custom color palette
+custom_colors <- c(
+  "4-5 cc/kg" = "green",
+  "5-6 cc/kg" = "lightgreen",
+  "6-7 cc/kg" = "lightgreen",
+  "7-8 cc/kg" = "lightblue",
+  "8-9 cc/kg" = "yellow",       # Highlight this bin
+  "9-10 cc/kg" = "orange",         # Higher than 8-9 cc/kg
+  "10-11 cc/kg" = "red",
+  "11-12 cc/kg" = "red",
+  ">= 12 cc/kg" = "darkred"     # Highest category
+)
+
+
+# Proportional bar chart
+ggplot(summary_data_bar, aes(x = proportion, y = hospital_id, fill = vt_bin)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~ sex_category) +
+  labs(
+    title = "Proportion of Tidal Volume Categories by Hospital and Sex",
+    x = "Proportion tidal volume per IBW",
+    y = "Hospital",
+    fill = "Tidal Volume Category"
+  ) +
+  scale_fill_manual(values = custom_colors) +  # Apply the custom color palette
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),  # Angle x-axis labels for better readability
+    legend.title = element_text(size = 10, face = "bold"),
+    plot.title = element_text(size = 14, face = "bold"),
+    legend.position = "top"
+  ) 
+
+
+##################################
+# Calculate proportions of tidal volume bins by height quantile and sex
+# Ensure sex_category is treated as a factor
+summary_data_height <- ltvv_female_table %>%
+  group_by(height_quantile, sex_category, vt_bin) %>%
+  summarise(total_n = sum(n), .groups = 'drop') %>%
+  group_by(height_quantile, sex_category) %>%
+  mutate(proportion = total_n / sum(total_n)) %>%
+  ungroup() %>%
+  mutate(sex_category = factor(sex_category, levels = c("male", "female")))  # Explicitly set factor levels
+
+# Scatter plot for proportions of tidal volume bins by height quantile
+ggplot(summary_data_height, aes(x = height_quantile, y = vt_bin, color = sex_category, size = proportion)) +
+  geom_point(alpha = 0.7) +  # Add transparency to improve visualization
+  labs(
+    title = "Proportion of Tidal Volume Bins by Height Quantiles and Sex",
+    x = "Height Quantile",
+    y = "Tidal Volume Category (cc/kg)",
+    color = "Sex Category",
+    size = "Proportion"
+  ) +
+  scale_color_manual(values = c("male" = "blue", "female" = "green")) +  # Colors for male/female
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),  # Angle x-axis labels for readability
+    legend.title = element_text(size = 10, face = "bold"),
+    plot.title = element_text(size = 14, face = "bold"),
+    legend.position = "top"
+  )
+
+
+
+# Heat map
+blue_gradient <- colorRampPalette(c("white", "blue"))(100)
+
+# Define a function to assign border color based on vt_bin
+border_colors <- function(vt_bin) {
+  if (vt_bin %in% c("< 4 cc/kg", "4-5 cc/kg", "5-6 cc/kg")) {
+    return("green")  # Great
+  } else if (vt_bin %in% c("6-7 cc/kg", "7-8 cc/kg")) {
+    return("yellow")  # Ok
+  } else {
+    return("red")  # Bad
+  }
+}
+
+# Add a new column to define border color based on vt_bin
+summary_data_height <- summary_data_height %>%
+  mutate(border_color = sapply(vt_bin, border_colors))
+
+# Heatmap with custom borders for tidal volume categories
+ggplot(summary_data_height, aes(x = height_quantile, y = vt_bin, fill = proportion)) +
+  geom_tile(color = summary_data_height$border_color, size = 1) +  # Border color based on vt_bin
+  facet_wrap(~sex_category) +  # Facet by sex category to show differences
+  scale_fill_gradientn(
+    colors = blue_gradient,  # Apply 100-step gradient from white to blue
+    limits = c(0, 1),        # Ensure the gradient covers the full range of proportions (0 to 1)
+    name = "Proportion"
+  ) +
+  labs(
+    title = "Heatmap of Tidal Volume Proportions by Height Quantiles and Sex",
+    x = "Height Quantile",
+    y = "Tidal Volume Category",
+    fill = "Proportion"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.title = element_text(size = 10, face = "bold"),
+    plot.title = element_text(size = 14, face = "bold"),
+    legend.position = "top"
+  )
+
+
+
+# side by side
+ggplot(summary_data_height, aes(x = height_quantile, y = proportion, fill = vt_bin)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  facet_wrap(~sex_category) +
+  labs(
+    title = "Side-by-Side Comparison of Tidal Volume Bins by Height Quantiles and Sex",
+    x = "Height Quantile",
+    y = "Proportion",
+    fill = "Tidal Volume Category"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.title = element_text(size = 10, face = "bold"),
+    plot.title = element_text(size = 14, face = "bold"),
+    legend.position = "top"
+  )
+
+
+# stacked proporation
+ggplot(summary_data_height, aes(x = height_quantile, y = proportion, fill = vt_bin)) +
+  geom_bar(stat = "identity", position = "stack") +
+  facet_wrap(~sex_category) +
+  labs(
+    title = "Proportion of Tidal Volume Bins by Height Quantiles and Sex",
+    x = "Height Quantile",
+    y = "Proportion",
+    fill = "Tidal Volume Category"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.title = element_text(size = 10, face = "bold"),
+    plot.title = element_text(size = 14, face = "bold"),
+    legend.position = "top"
+  )
+
+####################################
+# Violin plot for your own viewing
+
+ltvv_variation |>
+  filter(hospital_id %in% icu_hosp_ranks_8cc) |> 
+  mutate(hospital_id = factor(hospital_id, levels = rev(icu_hosp_ranks_8cc), labels = rev(str_to_title(icu_hosp_ranks_8cc)))) |> 
+  mutate(sex_category = factor(sex_category,
+                      levels = c("male", "female"),
+                      labels = c("Male", "Female"))) |> 
+  filter(vt_cckg < 15) |> 
+    group_by(hospital_id, sex_category) |>
+  filter(n() > 1) |>  # Keep only groups with more than one observation
+  ungroup() |> 
+  ggplot(aes(x = hospital_id, y = vt_cckg, fill = sex_category )) + 
+  # bw options c("nrd0", "nrd", "ucv", "bcv", "SJ-ste", "SJ-dpi"),
+    geom_violin(position="dodge", bw = "nrd0", alpha=0.4, trim = TRUE, scale = "width", draw_quantiles = c(0.5)) +
+  # scale_fill_brewer(palette = "RdBu", direction = 1) +
+  labs(
+    title = "Set tidal volume in first 24 hours by hospital",
+    x = "Hospital",
+    y = "Set Tidal Volume (cc/kg)"
+  ) +
+      theme_ipsum(axis_title_just = "m",
+                  axis_title_size =  15)  +
+
+  # theme_minimal() + # This theme provides a clean and modern look to the plot
+  scale_fill_manual(values = c("Male" = "blue", "Female" = "green")) + # Manual colors for gender  
+theme(
+  legend.title = element_blank(),
+  plot.background = element_blank(),
+  panel.grid = element_blank(),
+  panel.background = element_blank(),
+  panel.grid.major = element_blank(), 
+               panel.grid.minor = element_blank(),
+  axis.title.y = (element_text(margin = margin(r = 20))),
+  axis.title.x = (element_text(margin = margin(t = 20)))
+)
+
+  
+
+
+
+## ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+clif_po2_arterial <- clif_labs |> filter(lab_category == "po2_arterial") |> rename(po2_arterial = lab_value_numeric)
+
+clif_spo2 <- clif_vitals |> filter(vital_category == "spo2") |> rename(spo2 = vital_value)
+
+clif_fio2 <- df_hourly_resp_support |> filter(!is.na(fio2_set)) |> dplyr::select(clif_hospitalizations_joined_id, recorded_date, recorded_hour, fio2_set, location_name, location_category)
+
+
+df_sf_ratio <- clif_fio2 |> 
+  # left_join because we want to keep everything right now
+  left_join(clif_spo2 |> 
+              mutate(recorded_date = date(recorded_dttm),
+                     recorded_hour = hour(recorded_dttm)) |> 
+              arrange(clif_hospitalizations_joined_id, recorded_date, recorded_hour, spo2) |> 
+              # taking first non-missing 
+              distinct(clif_hospitalizations_joined_id, recorded_date, recorded_hour, .keep_all = TRUE),
+            by = join_by(clif_hospitalizations_joined_id, recorded_date, recorded_hour)
+  ) |> 
+  dplyr::select(clif_hospitalizations_joined_id, recorded_date, recorded_hour, recorded_dttm, fio2_set, spo2, location_name, location_category) |> 
+  mutate(sf_ratio = spo2 / (fio2_set/100)) 
+
+df_pf_ratio <- df_sf_ratio |> 
+  left_join(clif_po2_arterial |> 
+              mutate(recorded_date = date(recorded_dttm),
+                     recorded_hour = hour(recorded_dttm)) |> 
+              # keeping lab_name in there so ELS readings will be after normal pao2 readings 
+              #        ELS are sometimes falsely high
+              arrange(clif_hospitalizations_joined_id, recorded_date, recorded_hour, lab_name, po2_arterial) |> 
+              # taking first non-missing 
+              distinct(clif_hospitalizations_joined_id, recorded_date, recorded_hour, .keep_all = TRUE),
+            by = join_by(clif_hospitalizations_joined_id, recorded_date, recorded_hour)
+  ) |> 
+  mutate(pf_ratio = po2_arterial / (fio2_set/100)) |> 
+  dplyr::select(clif_hospitalizations_joined_id,
+         recorded_date,
+         recorded_hour,
+         fio2_set,
+         spo2,
+         po2_arterial,
+         pf_ratio,
+         sf_ratio, 
+         location_name, 
+         location_category)
+
+
+## ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+if ("mean_airway_pressure_obs" %in% names(df_resp_support_1)){
+  
+  
+clif_maip <- clif_respiratory_support |> filter(!is.na(mean_airway_pressure_obs)) |> dplyr::select(clif_hospitalizations_joined_id, recorded_dttm, mean_airway_pressure_obs) |> 
+    mutate(
+    recorded_date = date(recorded_dttm),
+    recorded_hour = hour(recorded_dttm)
+  )
+
+# these are maips that match and don't need to be expanded
+clif_maip_matches <- clif_maip |> 
+  inner_join(df_pf_ratio |> 
+               distinct(clif_hospitalizations_joined_id, recorded_date, recorded_hour, pf_ratio, sf_ratio) |> 
+               filter(!is.na(pf_ratio))
+             ) |> 
+  dplyr::select(-pf_ratio, -sf_ratio)
+  
+
+
+# Create a time range by adding/subtracting an hour and adjust dates for invalid hours
+clif_maip_expanded <- clif_maip |> 
+  # only keeping the ones that DONT have matches and need a 1 hour buffer to find frience 
+  anti_join(clif_maip_matches |> dplyr::select(clif_hospitalizations_joined_id, recorded_date, recorded_hour)) |> 
+  # Create new columns for recorded_hour - 1 and recorded_hour + 1
+  mutate(
+    recorded_hour_minus_1 = recorded_hour - 1,
+    recorded_hour_plus_1 = recorded_hour + 1
+  ) %>%
+  # Reshape data to have one `recorded_hour` column with ±1 values
+  pivot_longer(
+    cols = c(recorded_hour, recorded_hour_minus_1, recorded_hour_plus_1),
+    names_to = "time_variation",
+    values_to = "recorded_hour"
+  ) %>%
+  # Adjust date for invalid hours (negative or > 23)
+  mutate(
+    # If recorded_hour is negative, adjust to 23 and subtract one day
+    recorded_date = fifelse(recorded_hour < 0, recorded_date - days(1), recorded_date),
+    recorded_hour = fifelse(recorded_hour < 0, 23, recorded_hour),
+    
+    # If recorded_hour exceeds 23, adjust to 0 and add one day
+    recorded_date = fifelse(recorded_hour > 23, recorded_date + days(1), recorded_date),
+    recorded_hour = fifelse(recorded_hour > 23, 0, recorded_hour)
+  ) |> 
+  # bring in the matches
+  bind_rows(clif_maip_matches)
+
+
+df_oxygenation_index <- df_pf_ratio |> 
+  left_join(clif_maip_expanded, 
+            by = join_by(clif_hospitalizations_joined_id, recorded_date, recorded_hour)
+  ) |> 
+  filter(!is.na(fio2_set), !is.na(po2_arterial), !is.na(mean_airway_pressure_obs)
+         ) |> 
+  arrange(clif_hospitalizations_joined_id, recorded_date, recorded_hour)  |> 
+  mutate(oxygenation_index = (mean_airway_pressure_obs * fio2_set) / po2_arterial) |> 
+  filter(oxygenation_index < 100 ) |> 
+  dplyr::select(-recorded_dttm, -time_variation) |> 
+  distinct()
+}
+
+death_or_hospice_01 <- clif_hospitalization |>   # make dead/hospice column
+  mutate(
+    death_or_hospice_01 = fcase(
+      discharge_category %in% 
+        c("hospice", "dead", "expired", "died")       , 1,
+      default                                         = 0
+    )) |> 
+  dplyr::select(clif_hospitalizations_joined_id, mortality_enc = death_or_hospice_01) |> 
+  distinct()
+
+
+## ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+df_oxygenation_index_analysis_prep1 <- df_hourly_resp_support |>
+  # only hospitals that have enough traffic
+  filter(hospital_id %in% hospital_filter) |> 
+  
+  mutate(vent_01 = fifelse(device_category %in% c("imv", "trach collar"), 1, 0)) |> 
+  mutate(extubated_hour = fifelse(vent_01 == 0, 1, 0)) |> 
+  mutate(recorded_dttm = ymd_h(paste(recorded_date, recorded_hour))) |> 
+  
+  # take away people without ANY days of ventialtion
+  mutate(sum_vent_01 = fsum(vent_01, na.rm = TRUE),
+                           .by = "clif_hospitalizations_joined_id") |> 
+  
+  # at least 24hr of ventilation
+  filter(sum_vent_01 >= 24) |> 
+
+  # get first intubation time
+  group_by(clif_hospitalizations_joined_id, vent_episode_id) |> 
+  mutate(first_vent_time = ffirst(recorded_dttm, na.rm = TRUE)) |> 
+  ungroup() |> 
+  
+  # turn non_intubation times to NA
+  mutate(first_vent_time = fifelse(is.na(vent_episode_id), NA_POSIXct_, first_vent_time)) |> 
+  
+  group_by(clif_hospitalizations_joined_id) |> 
+  mutate(first_vent_time_enc = ffirst(first_vent_time, na.rm = TRUE)) |> 
+  
+  # this drops the times before first intubation so we can do survival analysis
+  filter(first_vent_time_enc <= recorded_dttm) |> 
+  
+  # see if they ever were extubated_hour after first vent episode
+  mutate(extubated_enc = fmax(extubated_hour, na.rm = TRUE)) |> 
+  
+  ungroup() |> 
+  
+  left_join(death_or_hospice_01) 
+
+
+
+df_oxygenation_index_analysis_prep <- df_oxygenation_index_analysis_prep1 |> 
+  # keep first episode of ventilation
+  filter(vent_episode_id == 1, vent_01 == 1) |> 
+  
+  # getting last vent hour
+  mutate(last_vent_time = fmax(recorded_dttm, na.rm = TRUE),
+         .by = clif_hospitalizations_joined_id) |> 
+  
+  # creating appropriate censor variable for mortality and extubated
+  mutate(extubated = fifelse(last_vent_time == recorded_dttm, extubated_enc, extubated_hour)) |> 
+  mutate(mortality = fifelse(last_vent_time == recorded_dttm, mortality_enc, 0)) |> 
+  
+  # when ppl are extubated but die later... the extubation is what they should be censored on... not mortality
+  mutate(mortality = fifelse(extubated == 1, 0, mortality))
+
+
+## ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+first_intubation_data <- df_oxygenation_index_analysis_prep |>
+
+  # get rid of those with NO tidal volumes ever
+  group_by(clif_hospitalizations_joined_id) %>%
+  filter(!all(is.na(tidal_volume_set))) %>%
+  ungroup() |> 
+
+  mutate(vent_hours_per_seq = difftime(last_vent_time, first_vent_time, units = "hours")) |>
+  dplyr::select(-sex_category) |> 
+  left_join(clif_patient |> dplyr::select(-hospitalization_id) |> distinct()) |> 
+  left_join(df_pf_ratio |> dplyr::select(clif_hospitalizations_joined_id, recorded_date, recorded_hour, pf_ratio) |> distinct()) |>
+  left_join(df_sf_ratio |> dplyr::select(clif_hospitalizations_joined_id, recorded_date, recorded_hour, sf_ratio) |> distinct()) |>
+  left_join(clif_laps2_scores |> dplyr::select(clif_hospitalizations_joined_id, recorded_date, laps2) |> distinct()) |> 
+  left_join(clif_hospitalization |> dplyr::select(clif_hospitalizations_joined_id, age_at_admission, admission_dttm, discharge_dttm
+                                           # admission_type_category
+                                           ) |> distinct()) |> 
+
+  # Filter data for the first intubation
+  filter(vent_episode_id == 1)
+
+
+
+
+
+
+
+## ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+if ("mean_airway_pressure_obs" %in% names(df_resp_support_1)){
+first_intubation_data <- first_intubation_data |> 
+  left_join(df_oxygenation_index |> dplyr::select(clif_hospitalizations_joined_id, recorded_date, recorded_hour, oxygenation_index) |> distinct())
+
+# Calculate the worst oxygenation index in the first 24 hours
+worst_oxygenation_24hr <- first_intubation_data %>%
+  filter(vent_episode_hour_seq < 24) %>%
+  group_by(clif_hospitalizations_joined_id) %>%
+  summarise(worst_oxygenation_24hr = fmin(oxygenation_index, na.rm = TRUE))
+
+# Calculate the worst oxygenation index between 48 and 72 hours
+worst_oxygenation_48_72hr <- first_intubation_data %>%
+  filter(vent_episode_hour_seq >= 48 & vent_episode_hour_seq < 72) %>%
+  group_by(clif_hospitalizations_joined_id) %>%
+  summarise(worst_oxygenation_48_72hr = fmin(oxygenation_index, na.rm = TRUE))
+
+# Calculate the delta change in oxygenation index
+delta_oxygenation <- worst_oxygenation_48_72hr %>%
+  left_join(worst_oxygenation_24hr, by = "clif_hospitalizations_joined_id") %>%
+  mutate(delta_oxygenation = worst_oxygenation_48_72hr - worst_oxygenation_24hr)
+
+# Prepare the dataset for the logistic regression model
+model_data <- delta_oxygenation %>%
+  left_join(first_intubation_data %>%
+              group_by(clif_hospitalizations_joined_id) %>%
+              summarise(mortality_enc = first(mortality_enc),
+                        age_at_admission = first(age_at_admission),
+                        sex_category = first(sex_category),
+                        race_category = first(race_category),
+                        # ethnicity_category = first(ethnicity_category),
+                        hospital_id = first(hospital_id)),
+            by = "clif_hospitalizations_joined_id")
+
+
+# Join the labeled hospitals back to your model_data
+model_data <- model_data %>%
+  left_join(hospital_order %>% dplyr::select(hospital_id, hospital_label), by = "hospital_id")
+
+}
+
+
+# 
+# # Fit the logistic regression model
+# model <- glm(mortality_enc ~ worst_oxygenation_24hr + delta_oxygenation + 
+#               age_at_admission + sex_category + race_category + 
+#                # ethnicity_category + 
+#                hospital_id,
+#              data = model_data, family = binomial())
+# 
+# # Summary of the model
+# summary(model)
+# 
+# 
+# # Extract the model results (odds ratios, confidence intervals, and p-values)
+# model_results <- broom::tidy(model, exponentiate = TRUE, conf.int = TRUE)
+# 
+# # Save the results as a CSV file
+# write.csv(model_results, paste0("output/final/logistic_regression_results_.", site_name,"_", Sys.Date(),".csv"), row.names = FALSE)
+# 
+# 
+# # Create a forest plot from the model results
+# forest_plot <- ggplot(model_results, aes(x = term, y = estimate)) +
+#   geom_point() +
+#   geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2) +
+#   coord_flip() +
+#   labs(x = "Variables", y = "Odds Ratio (log scale)") +
+#   scale_y_log10() +  # Log scale for odds ratios
+#   theme_minimal()
+# 
+# # Show the forest plot
+# print(forest_plot)
+# 
+# # Save the plot
+# ggsave("output/intermediate/forest_plot.png", forest_plot)
+# 
+# 
+# 
+# # Modify the logistic regression model to include interaction
+# model_interaction <- glm(mortality_enc ~ worst_oxygenation_24hr * delta_oxygenation + 
+#                          age_at_admission + sex_category + race_category + 
+#                            # ethnicity_category + 
+#                            hospital_id,
+#                          data = model_data, family = binomial())
+# 
+# # Extract results with interaction term
+# model_interaction_results <- broom::tidy(model_interaction, exponentiate = TRUE, conf.int = TRUE)
+# 
+# summary(model_interaction)
+# 
+# # Save the interaction model results as a CSV file
+# write.csv(model_interaction_results, paste0("output/final/logistic_regression_interaction_results_.", site_name,"_", Sys.Date(),".csv"), row.names = FALSE)
+# 
+# # Create a forest plot for the interaction model
+# forest_plot_interaction <- ggplot(model_interaction_results, aes(x = term, y = estimate)) +
+#   geom_point() +
+#   geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2) +
+#   coord_flip() +
+#   labs(x = "Variables (with Interaction)", y = "Odds Ratio (log scale)") +
+#   scale_y_log10() +  # Log scale for odds ratios
+#   theme_minimal()
+# 
+# # Show the forest plot
+# print(forest_plot_interaction)
+# 
+# # Save the interaction plot
+# ggsave("output/intermediate/forest_plot_interaction.png", forest_plot_interaction)
+
+
+
+
+
+## ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+# first_intubation_data <- 
+#   first_intubation_data  %>%  mutate(
+#         FEV1 = case_when((race == "WHITE")~ pred_GLI(age, height/100, gender = gender12, ethnicity = 1, param = "FEV1"),
+#                           (race == "BLACK")~ pred_GLI(age, height/100, gender = gender12, ethnicity = 2, param = "FEV1"),
+#                           (race == "OTHER")~ pred_GLI(age, height/100, gender = gender12, ethnicity = 5, param = "FEV1")),
+#             FVC = case_when((race == "WHITE")~ pred_GLI(age, height/100, gender = gender12, ethnicity = 1, param = "FVC"),
+#                             (race == "BLACK")~ pred_GLI(age, height/100, gender = gender12, ethnicity = 2, param = "FVC"),
+#                             (race == "OTHER")~ pred_GLI(age, height/100, gender = gender12, ethnicity = 5, param = "FVC")),
+#         VFR = tidalvolume/(FVC * 10), 
+#         FEVFVC = FEV1/FVC
+#   )
+
+
+
+## ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+run_analysis_for_variable_finalfit <- function(var_name, interaction_term = FALSE) {
+  
+  print(var_name)
+  
+  # Calculate the worst value in the first 24 hours
+  worst_24hr <- first_intubation_data %>%
+    filter(vent_episode_hour_seq < 24) %>%
+    group_by(clif_hospitalizations_joined_id) %>%
+    summarise(worst_24hr = fmin(get(var_name), na.rm = TRUE))
+  
+  # Calculate the worst value between 48 and 72 hours
+  worst_48_72hr <- first_intubation_data %>%
+    filter(vent_episode_hour_seq >= 48 & vent_episode_hour_seq < 72) %>%
+    group_by(clif_hospitalizations_joined_id) %>%
+    summarise(worst_48_72hr = fmin(get(var_name), na.rm = TRUE))
+  
+  # Calculate the delta change
+  delta_var <- worst_48_72hr %>%
+    left_join(worst_24hr, by = "clif_hospitalizations_joined_id") %>%
+    mutate(delta_var = worst_48_72hr - worst_24hr)
+  
+  # Prepare the dataset for the logistic regression model
+  model_data <- delta_var %>%
+    left_join(first_intubation_data %>%
+                group_by(clif_hospitalizations_joined_id) %>%
+                summarise(mortality_enc = ffirst(mortality_enc),
+                          age_at_admission = ffirst(age_at_admission),
+                          sex_category = ffirst(str_to_title(sex_category)), 
+                          race_category = ffirst(str_to_title(race_category)), 
+                          # ethnicity_category = first(ethnicity_category),
+                          hospital_id = ffirst(str_to_title(hospital_id))),
+              by = "clif_hospitalizations_joined_id")
+    
+  # Ensure model_data is a dataframe for finalfit
+  model_data <- as.data.frame(model_data)
+
+  
+  # Prepare the finalfit input: dependent and explanatory variables
+  dependent <- "mortality_enc"
+  
+  explanatory <- c("worst_24hr", 
+                   # "delta_var", 
+                   "age_at_admission", 
+                   # "race_category",
+                   "sex_category"
+                   )
+  
+  if (hosp_id_count > 1) {
+    explanatory <- c("worst_24hr", 
+                     # "delta_var", 
+                     "age_at_admission", 
+                     "sex_category", 
+                     # "race_category", 
+                     "hospital_id")
+  }
+  
+  
+  if (interaction_term) {
+    explanatory <- c("worst_24hr*delta_var", explanatory[!(explanatory %in% c("worst_24hr", "delta_var"))])
+  }
+  
+  
+  # Fit the logistic regression model
+  explanatory_lr <- explanatory
+  form_lr <- paste(dependent, "~", paste(explanatory_lr, collapse = " + "))
+  fit <- model_data |> 
+    with(glm(formula = as.formula(form_lr), family = binomial(link = "logit")))
+  
+  # Display the formula for the regression
+  print("This is the formula for the regression")
+  print(form_lr)
+  
+  
+  print(summary(fit))
+  
+  # Generate a regression table using tbl_regression
+  # tbl <- model_data |> 
+  #   with(glm(formula = as.formula(form_lr), family = binomial(link = "logit"))) %>%
+  #   tbl_regression(exponentiate = TRUE) %>%
+  #   bold_labels() %>%
+  #   italicize_levels() %>%
+  #   bold_p() %>%
+  #   as_gt() %>%
+  #   opt_vertical_padding(scale = 0.5) %>%
+  #   opt_row_striping()
+  # 
+  # # Print the table
+  # print(tbl)
+  # 
+  # # Save the table to a file (optional)
+  # suffix <- ifelse(interaction_term, "interaction", "no_interaction")
+  # gtsave(tbl, filename = paste0("output/intermediate/finalfit__", var_name, "_", suffix, "_table_", Sys.Date(), ".html"))
+  
+  # Plot the odds ratio plot
+  # or_plot <- model_data |> 
+  #   or_plot(dependent, c(explanatory_lr), glmfit = fit, 
+  #           dependent_label = paste("Outcome: Mortality", var_name)) 
+  # 
+  # # Display and save the plot
+  # print(or_plot)
+  # 
+  # ggsave(paste0("output/intermediate/forest_plot_finalfit__", var_name, "_", suffix, ".png"), plot = or_plot)
+  
+  # --- Extract Coefficients and Confidence Intervals ---
+  
+  # Extract coefficients and confidence intervals
+  tidy_fit <- tidy(fit, conf.int = TRUE, exponentiate = TRUE)
+  
+  # Add a column for the variable name
+  tidy_fit <- tidy_fit %>%
+    mutate(variable = var_name,
+           site = site_name) 
+  
+  suffix <- ifelse(interaction_term, "interaction", "no_interaction")
+  write.csv(tidy_fit, file = paste0("output/intermediate/model_coefs__", var_name, "_", suffix, "__", site_name, "_", Sys.Date(), ".csv"), row.names = FALSE)
+
+  
+  return(fit)
+}
+
+# Run the analysis for each variable (oxygenation_index, pf_ratio, sf_ratio, laps2)
+
+variables <- c("pf_ratio", "sf_ratio", "laps2")
+
+if ("mean_airway_pressure_obs" %in% names(df_resp_support_1)){
+  variables <- c("oxygenation_index", "pf_ratio", "sf_ratio", "laps2")
+}
+
+
+for (var in variables) {
+  # Without interaction
+  run_analysis_for_variable_finalfit(var, interaction_term = FALSE)
+  
+  # # With interaction
+  # run_analysis_for_variable_finalfit(var, interaction_term = TRUE)
+  
+}
+
+
+
+## ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+if ("mean_airway_pressure_obs" %in% names(df_resp_support_1)){
+df_oxygenation_index_analysis_prep_temp <- df_oxygenation_index_analysis_prep1 |> 
+  left_join(df_oxygenation_index |> dplyr::select(clif_hospitalizations_joined_id, recorded_date, recorded_hour, oxygenation_index) |> distinct())
+} else {
+  
+df_oxygenation_index_analysis_prep_temp <- df_oxygenation_index_analysis_prep1
+
+}
+
+
+## prep1 is before we lose all the data after the first vent episode
+intubation_data <- df_oxygenation_index_analysis_prep_temp |> 
+    dplyr::select(-sex_category) |> 
+  
+  # get rid of those with no tidal volumes ever
+  group_by(clif_hospitalizations_joined_id) %>%
+  filter(!all(is.na(tidal_volume_set))) %>%
+  ungroup() |> 
+  
+  # joining things together
+  left_join(clif_patient |> dplyr::select(-hospitalization_id) |> distinct()) |> 
+  left_join(df_pf_ratio |> dplyr::select(clif_hospitalizations_joined_id, recorded_date, recorded_hour, pf_ratio) |> distinct()) |>
+  left_join(df_sf_ratio |> dplyr::select(clif_hospitalizations_joined_id, recorded_date, recorded_hour, sf_ratio) |> distinct()) |>
+  left_join(clif_laps2_scores |> dplyr::select(clif_hospitalizations_joined_id, recorded_date, laps2) |> distinct()) |> 
+  left_join(clif_hospitalization |> dplyr::select(clif_hospitalizations_joined_id, age_at_admission, admission_dttm, discharge_dttm
+                                           # admission_type_category
+                                           ) |> distinct()) |> 
+  # getting new hour seq from start of MV
+  group_by(clif_hospitalizations_joined_id) |> 
+  mutate(hour_sequence_from_first_vent_to_discharge = 
+           fcumsum(!is.na(clif_hospitalizations_joined_id), fill = TRUE)) |> 
+  
+  # Add 'day' variable (starting from 1) This will be the start of MV (first episode) includes till discharge
+    mutate(day = floor(hour_sequence_from_first_vent_to_discharge / 24.0001) + 1) |> 
+  # calculate if they got high tidal volume exposure
+  mutate(htvv = ifelse(tidal_volume_set > (8 * ibw), 1, 0)) |>
+  # calculate rate per day of high tidal volume exposure
+  group_by(clif_hospitalizations_joined_id, day) |> 
+  mutate(hours_in_that_day = n()) |> 
+  mutate(htvv_daily_percent = fsum(htvv, na.rm = TRUE) / hours_in_that_day ) |> 
+  
+  # if NA... then its zero for high tidal volume exposure
+  # May need to rethink this... we can't DROP them because we want to calc vent free days later
+  # But maybe we just leave as NA and then it will drop from analysis later?
+  mutate(htvv_daily_percent = fifelse(is.na(htvv_daily_percent), 0, htvv_daily_percent)) |> 
+  ungroup()
+
+
+### a way to test var_daily that is in the function below ##
+  # Aggregate the variable by day
+  var_daily_testing <- intubation_data %>%
+    group_by(clif_hospitalizations_joined_id, day, htvv_daily_percent) %>%
+    summarise(laps2_daily =  fmax(laps2, na.rm = TRUE)) %>%
+    arrange(clif_hospitalizations_joined_id, day) %>%
+    group_by(clif_hospitalizations_joined_id) %>%
+    # Handle missing data by carrying forward previous day's value
+    mutate(laps2_daily = zoo::na.locf(laps2_daily, na.rm = FALSE)) %>%
+    group_by(clif_hospitalizations_joined_id) %>%
+    arrange(clif_hospitalizations_joined_id, day) %>%
+    # flag fill means that on day 1 it will subtract by itself (there is no lag) and delta will be zero
+    mutate(delta_laps2_daily = laps2_daily - flag(laps2_daily, fill = laps2_daily)) %>%
+    ungroup()
+### a way to test var_daily #################################  
+
+
+# Updated function
+run_daily_analysis_for_variable_finalfit <- function(var_name, agg_func, interaction_term = FALSE) {
+  
+  ############   ############   ############ 
+  ############   mortality      ############ 
+  ############   ############   ############ 
+  message(paste("Processing variable:", var_name))
+  
+  # Define variable names based on var_name
+  var_daily_name <- paste0("daily_", var_name)
+  delta_var_name <- paste0("delta_", var_name)
+  worst_24hr_name <- paste0(var_name, "_first_24hr")
+  
+  # --- Step 1: Calculate Ventilator-Free Days (VFDs) ---
+  
+  # Calculate total ventilator hours per patient
+  ventilator_hours <- intubation_data %>%
+    group_by(clif_hospitalizations_joined_id) %>%
+    summarise(total_ventilator_hours = sum(vent_01, na.rm = TRUE)) %>%
+    mutate(total_ventilator_days = total_ventilator_hours / 24)
+  
+  # Get mortality status for each patient
+  mortality_data <- intubation_data %>%
+    group_by(clif_hospitalizations_joined_id) %>%
+    summarise(mortality_enc = ffirst(mortality_enc))
+  
+  # Combine ventilator data and mortality data
+  ventilator_data <- ventilator_hours %>%
+    left_join(mortality_data, by = "clif_hospitalizations_joined_id") %>% 
+    mutate(
+      VFDs = case_when(
+        mortality_enc == 1 ~ 0,                        # If the patient died, VFDs = 0
+        total_ventilator_days >= 28 ~ 0,               # If ventilated for >=28 days, VFDs = 0
+        TRUE ~ 28 - total_ventilator_days              # Otherwise, VFDs = 28 - total ventilator days
+      )
+    )
+  
+  # --- Step 2: Aggregate Variable by Day ---
+  
+  # Aggregate the variable by day
+  var_daily <- intubation_data %>%
+    group_by(clif_hospitalizations_joined_id, day, htvv_daily_percent) %>%
+    summarise(!!var_daily_name := agg_func(get(var_name), na.rm = TRUE)) %>%
+    ungroup() |> 
+    arrange(clif_hospitalizations_joined_id, day) %>%
+    group_by(clif_hospitalizations_joined_id) %>%
+    # Handle missing data by carrying forward previous day's value
+    mutate(!!var_daily_name := zoo::na.locf(!!sym(var_daily_name), na.rm = FALSE)) %>%
+    ungroup()
+  
+  # --- Step 3: Calculate Delta from Previous Day ---
+  
+  var_daily <- var_daily %>%
+    group_by(clif_hospitalizations_joined_id) %>%
+    arrange(clif_hospitalizations_joined_id, day) %>%
+    mutate(!!delta_var_name := !!sym(var_daily_name) - flag(!!sym(var_daily_name), fill = !!sym(var_daily_name))) %>%
+    ungroup()
+  
+  # --- Step 4: Get First 24-Hour Value ---
+  
+  first_day_var <- var_daily %>%
+    filter(day == 1) %>%
+    select(clif_hospitalizations_joined_id, !!worst_24hr_name := !!sym(var_daily_name))
+  
+  # --- Step 5: Prepare the Model Data ---
+  
+  # Use data from day 28 and below
+  model_data_start <- var_daily %>%
+    filter(day <= 28) %>%
+    select(clif_hospitalizations_joined_id, day, !!var_daily_name, !!delta_var_name, htvv_daily_percent)
+  
+  # Combine with first day value
+  model_data <- model_data_start %>%
+    left_join(first_day_var, by = "clif_hospitalizations_joined_id")
+  
+  # Combine with ventilator data and mortality data
+  model_data <- model_data %>%
+    left_join(ventilator_data %>% select(clif_hospitalizations_joined_id, mortality_enc, VFDs), by = "clif_hospitalizations_joined_id")
+  
+  # Add covariates
+  model_data <- model_data %>%
+    left_join(intubation_data %>%
+                group_by(clif_hospitalizations_joined_id) %>%
+                summarise(
+                  age_at_admission = ffirst(age_at_admission),
+                  sex_category = ffirst(str_to_title(sex_category)), 
+                  race_category = ffirst(str_to_title(race_category)), 
+                  hospital_id = ffirst(str_to_title(hospital_id))
+                ), by = "clif_hospitalizations_joined_id")
+  
+  # Ensure model_data is a dataframe
+  model_data <- as.data.frame(model_data)
+  
+  # Convert categorical variables to factors
+  model_data$sex_category <- as.factor(model_data$sex_category)
+  model_data$race_category <- as.factor(model_data$race_category)
+  model_data$hospital_id <- as.factor(model_data$hospital_id)
+  model_data$mortality_enc <- as.factor(model_data$mortality_enc)
+  
+  # --- Step 6: Prepare the Variables for the Model ---
+  message("peek at the data")
+  head(model_data)
+  
+  # Define dependent and explanatory variables
+  dependent <- "mortality_enc"  # You can change this to 'VFDs' if modeling ventilator-free days
+  
+  explanatory <- c(worst_24hr_name,
+                   var_daily_name,
+                   # delta_var_name,
+                   "age_at_admission",
+                   "sex_category",
+                   # "race_category",
+                   "day",
+                   "htvv_daily_percent")
+  
+  if (hosp_id_count > 1) {
+    explanatory <- c(explanatory, "hospital_id")
+  }
+  
+  if (interaction_term) {
+    # Add interaction term between worst_24hr and delta_var
+    explanatory <- c(paste0(worst_24hr_name, var_daily_name,"*", delta_var_name), explanatory[!(explanatory %in% c(worst_24hr_name, delta_var_name))])
+  }
+  
+  # --- Step 7: Fit the Mixed-Effects Logistic Regression Model ---
+  
+  explanatory_lr <- explanatory
+  form_lr <- paste(dependent, "~", paste(explanatory_lr, collapse = " + "))
+  fit <- model_data |> 
+    with(glm(formula = as.formula(form_lr), family = binomial(link = "logit")))
+  
+  # Display the formula for the regression
+  message("This is the formula for the regression")
+  print(form_lr)
+  
+  # Print the summary
+  print(summary(fit))
+  
+  # --- Step 8: Generate and Save Regression Table ---
+  
+  message("starting the table for Mortality Model")
+# UNCOMMENT Below IF YOU WANT PRETTY TABLES
+#
+  # Generate a regression table using tbl_regression
+  # tbl <- model_data |> 
+  #   with(fit) %>%
+  #   tbl_regression(exponentiate = TRUE) %>%
+  #   bold_labels() %>%
+  #   italicize_levels() %>%
+  #   bold_p() %>%
+  #   as_gt() %>%
+  #   opt_vertical_padding(scale = 0.5) %>%
+  #   opt_row_striping()
+  # 
+  # print(tbl)
+  # 
+  # # Save the table to a file
+  # suffix <- ifelse(interaction_term, "interaction", "no_interaction")
+  # table_filename <- paste0("output/intermediate/finalfit__", var_name, "_", suffix, "_table_", Sys.Date(), ".html")
+  # gtsave(tbl, filename = table_filename)
+  # message("just saved mortality gt table")
+
+  
+
+  # --- Step 9: Plot and Save Odds Ratio Plot ---
+  
+  # Extract fixed effects coefficients
+  tidy_fit <- broom.mixed::tidy(fit, conf.int = TRUE, exponentiate = TRUE)
+  
+  # Exclude the intercept
+  # plot_data <- tidy_fit %>%
+  #   filter(term != "(Intercept)") %>%
+  #   mutate(term = factor(term, levels = rev(unique(term)))) %>%
+  #   mutate(term_label = recode(term,
+  #     !!worst_24hr_name := paste(var_name, "First 24hr"),
+  #     !!var_daily_name := paste(var_name, "Daily"),
+  #     !!delta_var_name := paste("Delta", var_name),
+  #     "htvv_daily_percent" = "Daily % HTVV",
+  #     "age_at_admission" = "Age at Admission",
+  #     "sex_categoryFemale" = "Sex: Female",
+  #     # "race_category" = "Race Category",
+  #     "hospital_id" = "Hospital ID"
+  #   ))
+  # 
+  # # Plot the odds ratio plot
+  # or_plot <- model_data |> 
+  #   or_plot(dependent, c(explanatory_lr), glmfit = fit, 
+  #           dependent_label = paste("Outcome: Mortality", var_name)) 
+  # 
+  # 
+  # plot_filename <- paste0("output/intermediate/forest_plot_finalfit_daily__", var_name, "_", suffix, ".png")
+  # ggsave(plot_filename, plot = or_plot)
+  # message("just saved OR plot for mortality")
+  # --- Step 10: Extract Coefficients and Save ---
+
+  
+  tidy_fit <- tidy_fit %>%
+    mutate(variable = var_name,
+           site = site_name)
+  
+  print(tidy_fit)
+  
+  # Save the coefficients to a CSV file
+  suffix <- ifelse(interaction_term, "interaction", "no_interaction")
+  coefficients_filename <- paste0("output/final/model_coefs_daily__", var_name, "__", suffix, "__", site_name, "_", Sys.Date(), ".csv")
+  
+  write.csv(tidy_fit, file = coefficients_filename, row.names = FALSE)
+  message("just saved mortality coefs in the final folder!")
+  
+  
+  ############   ############   ############ 
+  ############   vent free days   ############ 
+  ############   ############   ############ 
+
+  
+  # Combine with first day value
+  model_data <- model_data_start %>%
+    left_join(first_day_var, by = "clif_hospitalizations_joined_id")
+  
+  # Combine with ventilator data and mortality data
+  model_data <- model_data %>%
+    left_join(ventilator_data %>% select(clif_hospitalizations_joined_id, VFDs), by = "clif_hospitalizations_joined_id")
+  
+  # Add covariates
+  model_data <- model_data %>%
+    left_join(intubation_data %>%
+                group_by(clif_hospitalizations_joined_id) %>%
+                summarise(
+                  age_at_admission = ffirst(age_at_admission),
+                  sex_category = ffirst(str_to_title(sex_category)), 
+                  race_category = ffirst(str_to_title(race_category)), 
+                  hospital_id = ffirst(str_to_title(hospital_id))
+                ), by = "clif_hospitalizations_joined_id")
+  
+  # Ensure model_data is a dataframe
+  model_data <- as.data.frame(model_data)
+  
+  # Convert categorical variables to factors
+  model_data$sex_category <- as.factor(model_data$sex_category)
+  model_data$race_category <- as.factor(model_data$race_category)
+  model_data$hospital_id <- as.factor(model_data$hospital_id)
+  
+  # --- Step 6: Prepare the Variables for the Model ---
+  message("peek at the data VFDs")
+  head(model_data)
+
+  # Define dependent and explanatory variables
+  dependent <- "VFDs"
+  
+  explanatory <- c(worst_24hr_name,
+                   var_daily_name,
+                   # delta_var_name,
+                   "age_at_admission",
+                   "sex_category",
+                   "day",
+                   # "race_category",
+                   "htvv_daily_percent")
+  
+  if (hosp_id_count > 1) {
+    explanatory <- c(explanatory, "hospital_id")
+  }
+  
+  if (interaction_term) {
+    # Add interaction term between worst_24hr and delta_var
+    explanatory <- c(paste0(worst_24hr_name, var_daily_name, "*", delta_var_name), explanatory[!(explanatory %in% c(worst_24hr_name, delta_var_name))])
+  }
+  
+  # --- Step 7: Fit the Negative Binomial Regression Model ---
+  
+  explanatory_lr <- explanatory
+  form_lr <- paste(dependent, "~", paste(explanatory_lr, collapse = " + "))
+  fit <- model_data |> 
+    with(lm(formula = as.formula(form_lr)))
+  
+  # Display the formula for the regression
+  message("This is the formula for the VFD regression")
+  print(form_lr)
+  
+  # Print the summary
+  print(summary(fit))
+  
+  # --- Step 8: Generate and Save Regression Table ---
+  
+  message("starting vent free days table")
+
+  # Generate a regression table using tbl_regression
+  # tbl <- model_data |> 
+  #   with(fit) %>%
+  #   tbl_regression() %>%
+  #   bold_labels() %>%
+  #   italicize_levels() %>%
+  #   bold_p() %>%
+  #   as_gt() %>%
+  #   opt_vertical_padding(scale = 0.5) %>%
+  #   opt_row_striping()
+  # 
+  # print(tbl)
+  # 
+  # # Save the table to a file
+  # suffix <- ifelse(interaction_term, "interaction", "no_interaction")
+  # table_filename <- paste0("output/intermediate/finalfit_vfds__", var_name, "_", suffix, "_table_", Sys.Date(), ".html")
+  # gtsave(tbl, filename = table_filename)
+  # message("just saved the vent free days table")
+   
+   
+  
+  # --- Step 9: Plot and Save Coefficient Plot ---
+  
+  # Extract coefficients
+  tidy_fit <- tidy(fit, conf.int = TRUE)
+  
+  # # Exclude the intercept
+  # plot_data <- tidy_fit %>%
+  #   filter(term != "(Intercept)") %>%
+  #   mutate(term = factor(term, levels = rev(unique(term))))
+  # 
+  # # Create the coefficient plot
+  # coef_plot <- ggplot(plot_data, aes(x = term, y = estimate, ymin = conf.low, ymax = conf.high)) +
+  #   geom_pointrange() +
+  #   coord_flip() +
+  #   labs(x = "Variables", y = "Incidence Rate Ratio", title = paste("Incidence Rate Ratios for VFDs -", var_name)) +
+  #   theme_bw()
+  # 
+  # message("here is the plot for vent free days")
+  # # Display and save the plot
+  # print(coef_plot)
+  # 
+  # plot_filename <- paste0("output/intermediate/coefs_plot_vfds__", var_name, "_", suffix, ".png")
+  # ggsave(plot_filename, plot = coef_plot)
+  
+  # --- Step 10: Extract Coefficients and Save ---
+  
+  tidy_fit <- tidy_fit %>%
+    mutate(variable = var_name,
+           site = site_name)
+  
+  # Save the coefficients to a CSV file
+  suffix <- ifelse(interaction_term, "interaction", "no_interaction")
+  coefficients_filename <- paste0("output/final/model_coefs_vfds__", var_name, "__", suffix, "__", site_name, "_", Sys.Date(), ".csv")
+  write.csv(tidy_fit, file = coefficients_filename, row.names = FALSE)
+  message("just saved the coefs for vent free days!")
+  
+  
+  
+  
+  return(fit)
+}
+
+# --- Run the Analysis for Each Variable ---
+
+variables <- list(
+  list(var_name = "sf_ratio", agg_func = fmin),
+  list(var_name = "pf_ratio", agg_func = fmin),
+  list(var_name = "laps2", agg_func = fmax)
+)
+
+if ("mean_airway_pressure_obs" %in% names(df_resp_support_1)) {
+  variables <- append(variables, list(list(var_name = "oxygenation_index", agg_func = fmin)))
+}
+
+for (var_info in variables) {
+  
+  var_name <- var_info$var_name
+  agg_func <- var_info$agg_func
+  
+  # Without interaction
+  run_daily_analysis_for_variable_finalfit(var_name, agg_func, interaction_term = FALSE)
+  
+  # Uncomment the following line if you want to run with interaction term
+  # run_daily_analysis_for_variable_finalfit(var_name, agg_func, interaction_term = TRUE)
+}
+
+
+
+
+
+## ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+# Calculate the worst oxygenation index in the first 24 hours
+worst_in_24hr <- first_intubation_data %>%
+  filter(vent_episode_id == 1) |> 
+  filter(vent_episode_hour_seq <=24) %>%
+  group_by(clif_hospitalizations_joined_id) %>%
+  summarise(
+    worst_laps2_24hr = fmax(laps2, na.rm = TRUE),
+    worst_sf_ratio = fmin(sf_ratio, na.rm = TRUE),
+    worst_pf_ratio = fmin(pf_ratio, na.rm = TRUE),
+    max_hours_in_24 = fmax(vent_episode_hour_seq, na.rm = TRUE)
+  ) |> 
+  ungroup()
+
+htvv_step1 <- first_intubation_data |> 
+  # 1 if high tidal volume, 0 otherwise
+  mutate(htvv = ifelse(tidal_volume_set > (8 * ibw), 1, 0)) |>
+  mutate(vt_per_kg_ibw = tidal_volume_set / ibw) |>  
+  # Cumulative hours while on first episode
+  group_by(clif_hospitalizations_joined_id) %>%
+  mutate(cumulative_htvv_hours = fcumsum(htvv * (vent_episode_id == 1), fill = TRUE)) |> 
+  ungroup() |>
+  # only keep first vent episode
+  filter(vent_episode_id == 1) |> 
+  # fixing death_dttm
+  mutate(disch_death_diff = difftime(death_dttm, discharge_dttm, units = "days")) |> 
+  mutate(death_dttm = ymd_hms(death_dttm, quiet = T)) |> 
+  mutate(adjusted_dttm = if_else(abs(disch_death_diff) <= 1, discharge_dttm, death_dttm)) |> 
+  mutate(adjusted_dttm = as_datetime(adjusted_dttm)) |> 
+  mutate(recorded_death_diff = difftime(adjusted_dttm, recorded_dttm, units = "hours")) |> 
+  mutate(within_48hr_death = if_else(recorded_death_diff <= 48, 1, 0, missing = 0)) |> 
+  # Event is death without extubation
+  mutate(event = within_48hr_death) |> 
+  left_join(worst_in_24hr) |> 
+  filter(!max_hours_in_24 < 24) |> 
+  distinct()
+
+
+
+
+## ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+########## Looking at death within 48 hours... 
+########## COX PH
+# Create the survival object
+survival_object_48hr <- with(htvv_step1, Surv(time = vent_episode_hour_seq, event = event))
+
+
+cox_48hr <- coxph(survival_object_48hr ~ cumulative_htvv_hours + sex_category + worst_laps2_24hr + worst_sf_ratio, data = htvv_step1)
+
+if (hosp_id_count > 1) {
+# Fit the Cox model for predicting death within 48 hours
+cox_48hr <- coxph(survival_object_48hr ~ cumulative_htvv_hours + sex_category + hospital_id + worst_laps2_24hr + worst_sf_ratio, data = htvv_step1)
+}
+
+# Summary of the model
+summary(cox_48hr)
+
+
+fit_mortality <- survfit(cox_48hr)
+plot(fit_mortality, main = "Survival Curve for Mortality", xlab = "Ventilation Hours", ylab = "Survival Probability")
+
+
+# cox.zph(cox_48hr)
+
+duration_filter <- 2000
+htvv_strata <- htvv_step1 %>%
+  ####################################################### FILTER out SUPER long ADMISSIONS
+  filter(vent_episode_duration_hours < duration_filter) |> 
+  
+  group_by(clif_hospitalizations_joined_id) |> 
+  mutate(max_cumulative_htvv_hours = fmax(cumulative_htvv_hours, na.rm = TRUE)) |> 
+  ungroup() |> 
+  distinct(clif_hospitalizations_joined_id, max_cumulative_htvv_hours) |> 
+  
+  ### only keeping those with exposure
+  filter(max_cumulative_htvv_hours > 0) |> 
+  mutate(htvv_group = ntile(max_cumulative_htvv_hours, 4))  # Divide into 10 groups
+
+htvv_step1_stata <- htvv_step1 %>%
+  filter(vent_episode_duration_hours < duration_filter) |> 
+  inner_join(htvv_strata)  # this will drop those with ZERO exposure because they are likely skewing things
+
+
+fit_htvv <- survfit(coxph(Surv(vent_episode_hour_seq, event) ~ strata(htvv_group) + sex_category + worst_laps2_24hr + worst_sf_ratio, data = htvv_step1_stata))
+
+
+
+if (hosp_id_count > 1) {
+# Stratified survival curves by HTVV group
+fit_htvv <- survfit(coxph(Surv(vent_episode_hour_seq, event) ~ strata(htvv_group) + sex_category + hospital_id + worst_laps2_24hr + worst_sf_ratio, data = htvv_step1_stata))
+}
+
+# Plot survival curves for different HTVV groups
+plot(fit_htvv, col = 1:4, lty = 1:4, main = "Effect of HTVV on Survival", xlab = "Ventilation Hours", ylab = "Survival Probability")
+legend("topright", legend = c("1st Quartile",
+                              "2nd Quartile",
+                              "3rd Quartile",
+                              "4th Quartile"
+                              # "5th Quartile",
+                              # "6th Quartile",
+                              # "7th Quartile",
+                              # "8th Quartile",
+                              # "9th Quartile",
+                              # "10th Quartile"
+                              ), col = 1:4, lty = 1:4)
+
+
+# Choose specific HTVV levels for plotting
+htvv_levels <- c(10, 30, 90, 500, 1000)
+
+# Predict survival curves for specific HTVV levels
+new_data <- data.frame(cumulative_htvv_hours = htvv_levels,
+                       sex_category = "male",  # Set other covariates (e.g., male)
+                       hospital_id = paste0("Hospital ",site_name," 1"),  # Set a specific hospital
+                       worst_laps2_24hr = mean(htvv_step1$worst_laps2_24hr, na.rm = TRUE),
+                       worst_sf_ratio = mean(htvv_step1$worst_sf_ratio, na.rm = TRUE))
+
+
+# Generate survival predictions
+surv_pred <- survfit(cox_48hr, newdata = new_data)
+
+# Plot the survival curves
+plot(surv_pred, col = 1:5, lty = 1:5, main = "Survival for Different HTVV Levels", xlab = "Ventilation Hours", ylab = "Survival Probability")
+legend("topright", legend = paste("HTVV =", htvv_levels, "hours"), col = 1:5, lty = 1:5)
+
+
+
+
+## ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+# Assuming CLIF labs table contains pH and pCO2 values along with recorded_dttm
+# Prepare the labs data
+clif_labs_htvv <- clif_labs %>%
+  filter(lab_category %in% c("ph_arterial", "pco2_arterial")) %>%  # Filter for pH and pCO2 from the labs
+  mutate(
+    recorded_date = date(lab_result_dttm),  # Extract date from recorded timestamp
+    recorded_hour = hour(lab_result_dttm)  # Extract hour from timestamp
+  ) |> 
+  mutate(
+    ph = fifelse(lab_category == "ph_arterial", lab_value_numeric, NA_real_),  # Assuming lab_name stores 'pH'
+    pco2 = fifelse(lab_category == "pco2_arterial", lab_value_numeric, NA_real_)  # Assuming lab_name stores 'pCO2_arterial'
+  ) |> 
+  dplyr::select(
+    clif_hospitalizations_joined_id,
+    recorded_date,
+    recorded_hour,
+    ph,
+    pco2
+  ) |> 
+  #  getting it so that there is one row per hour
+  group_by(clif_hospitalizations_joined_id,
+           recorded_date, recorded_hour) |> 
+  mutate(
+    ph = ffirst(ph, na.rm = TRUE),
+    pco2 = ffirst(pco2, na.rm = TRUE)
+  ) |> 
+  ungroup() |> 
+  distinct()
+
+
+# Prepare the data (as before)
+htvv_analysis <- htvv_step1 %>%
+
+  dplyr::select(
+    vt_per_kg_ibw,
+    sex_category,
+    age_at_admission,
+    laps2,
+    race_category,
+    hospital_id,
+    pf_ratio,
+    clif_hospitalizations_joined_id,  # Patient ID
+    recorded_date,
+    recorded_hour
+  ) %>%
+  drop_na() %>%
+  left_join(clif_labs_htvv |> distinct(), by = join_by(clif_hospitalizations_joined_id,recorded_date,recorded_hour)) |> 
+  mutate(
+    sex_category = as.factor(sex_category),
+    race_category = as.factor(race_category),
+    hospital_id = as.factor(hospital_id),
+    patient_id = as.factor(clif_hospitalizations_joined_id)  # Ensure patient_id is a factor
+  ) |> 
+  left_join(clif_height |> dplyr::select(clif_hospitalizations_joined_id, height_inches))
+
+# Summary statistics
+summary(htvv_analysis)
+
+# Check distribution of vt_per_kg_ibw
+hist(htvv_analysis$vt_per_kg_ibw, main = "Distribution of vt_per_kg_ibw", xlab = "vt_per_kg_ibw")# Check distribution of vt_per_kg_ibw
+
+
+## ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+if (hosp_id_count == 1) {
+  # Fit the mixed-effects model with random intercepts for patients and hospitals, including pH and pCO2
+  mixed_model_sex_category_ltvv <- lmer(
+    vt_per_kg_ibw ~
+      sex_category +
+      age_at_admission +
+      laps2 +
+      # race_category +
+      pf_ratio +
+      ph +          # Include ph in the model
+      pco2 +        # Include pco2 in the model
+      (1 | patient_id),
+    data = htvv_analysis
+  )
+}
+
+
+if (hosp_id_count > 1) {
+  # Fit the mixed-effects model with random intercepts for patients and hospitals, including pH and pCO2
+  mixed_model_sex_category_ltvv <- lmer(
+    vt_per_kg_ibw ~
+      sex_category +
+      age_at_admission +
+      laps2 +
+      # race_category +
+      pf_ratio +
+      ph +          # Include ph in the model
+      pco2 +        # Include pco2 in the model
+      hospital_id +
+      (1 | patient_id),
+    data = htvv_analysis
+  )
+}
+
+# Tidy the mixed model results
+model_results <- tidy(mixed_model_sex_category_ltvv, effects = "fixed", conf.int = TRUE)
+print(model_results)
+
+# Select relevant columns and rename them
+results_sex_category_ltvv <- model_results %>%
+  dplyr::select(
+    Variable = term, Estimate = estimate, StdError = std.error, 
+    LowerCI = conf.low, UpperCI = conf.high, DegreesFreedom = df, 
+    Statistic = statistic, PValue = p.value
+  ) %>%
+  # Add StudyID and Model columns
+  mutate(
+    StudyID = "sex_category_ltvv",  
+    Model = "Male ~ Vt",
+    Site = site_name
+  ) %>%
+  # Rearrange columns
+  dplyr::select(
+    StudyID, Model, Site, Variable, Estimate, StdError, 
+    LowerCI, UpperCI, DegreesFreedom, Statistic, PValue
+  )
+
+write.csv(results_sex_category_ltvv, paste0("output/final/model_coefs_sex_category_ltvv__", site_name, "_", Sys.Date(), ".csv"), row.names = FALSE)
+
+
+## ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+if (hosp_id_count == 1) {
+  # Fit the mixed-effects model with random intercepts for patients and hospitals, including pH and pCO2
+  mixed_model_sex_category_height_ltvv <- lmer(
+    vt_per_kg_ibw ~
+      sex_category +
+      height_inches +
+      age_at_admission +
+      laps2 +
+      # race_category +
+      pf_ratio +
+      ph +          # Include ph in the model
+      pco2 +        # Include pco2 in the model
+      (1 | patient_id),
+    data = htvv_analysis
+  )
+}
+
+
+if (hosp_id_count > 1) {
+  # Fit the mixed-effects model with random intercepts for patients and hospitals, including pH and pCO2
+  mixed_model_sex_category_height_ltvv <- lmer(
+    vt_per_kg_ibw ~
+      sex_category +
+      height_inches +
+      age_at_admission +
+      laps2 +
+      # race_category +
+      pf_ratio +
+      ph +          # Include ph in the model
+      pco2 +        # Include pco2 in the model
+      hospital_id +
+      (1 | patient_id),
+    data = htvv_analysis
+  )
+}
+
+# Tidy the mixed model results
+model_results <- tidy(mixed_model_sex_category_height_ltvv, effects = "fixed", conf.int = TRUE)
+print(model_results)
+
+# Select relevant columns and rename them
+results_sex_category_height_ltvv <- model_results %>%
+  dplyr::select(
+    Variable = term, Estimate = estimate, StdError = std.error, 
+    LowerCI = conf.low, UpperCI = conf.high, DegreesFreedom = df, 
+    Statistic = statistic, PValue = p.value
+  ) %>%
+  # Add StudyID and Model columns
+  mutate(
+    StudyID = "sex_category_height_ltvv",  
+    Model = "Male + Height ~ Vt",
+    Site = site_name
+  ) %>%
+  # Rearrange columns
+  dplyr::select(
+    StudyID, Model, Site, Variable, Estimate, StdError, 
+    LowerCI, UpperCI, DegreesFreedom, Statistic, PValue
+  )
+
+write.csv(results_sex_category_height_ltvv, paste0("output/final/model_coefs_sex_category_height_ltvv__", site_name, "_", Sys.Date(), ".csv"), row.names = FALSE)
+
+
+## ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+##########################
+### Height Interaction ##
+#########################
+if (hosp_id_count == 1) {
+  # Fit the mixed-effects model with random intercepts for patients and hospitals, including pH and pCO2
+  mixed_model_sex_interaction_height_ltvv <- lmer(
+    vt_per_kg_ibw ~
+      sex_category * height_inches +
+      age_at_admission +
+      laps2 +
+      # race_category +
+      pf_ratio +
+      ph +          # Include ph in the model
+      pco2 +        # Include pco2 in the model
+      (1 | patient_id),
+    data = htvv_analysis
+  )
+}
+
+
+if (hosp_id_count > 1) {
+  # Fit the mixed-effects model with random intercepts for patients and hospitals, including pH and pCO2
+  mixed_model_sex_interaction_height_ltvv <- lmer(
+    vt_per_kg_ibw ~
+      sex_category * height_inches +
+      age_at_admission +
+      laps2 +
+      # race_category +
+      pf_ratio +
+      ph +          # Include ph in the model
+      pco2 +        # Include pco2 in the model
+      hospital_id +
+      (1 | patient_id),
+    data = htvv_analysis
+  )
+}
+
+# Tidy the mixed model results
+model_results <- tidy(mixed_model_sex_interaction_height_ltvv, effects = "fixed", conf.int = TRUE)
+print(model_results)
+
+# Select relevant columns and rename them
+results_sex_interaction_height_ltvv <- model_results %>%
+  dplyr::select(
+    Variable = term, Estimate = estimate, StdError = std.error, 
+    LowerCI = conf.low, UpperCI = conf.high, DegreesFreedom = df, 
+    Statistic = statistic, PValue = p.value
+  ) %>%
+  # Add StudyID and Model columns
+  mutate(
+    StudyID = "sex_interaction_height_ltvv",  
+    Model = "Male * Height ~ Vt",
+    Site = site_name
+  ) %>%
+  # Rearrange columns
+  dplyr::select(
+    StudyID, Model, Site, Variable, Estimate, StdError, 
+    LowerCI, UpperCI, DegreesFreedom, Statistic, PValue
+  )
+
+write.csv(results_sex_interaction_height_ltvv, paste0("output/final/model_coefs_sex_interaction_height_ltvv__", site_name, "_", Sys.Date(), ".csv"), row.names = FALSE)
+
+
+## ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+##########################
+### Height Interaction RCS ##
+#########################
+if (hosp_id_count == 1) {
+  # Fit the mixed-effects model with random intercepts for patients and hospitals, including pH and pCO2
+  mixed_model_sex_interaction_height_ltvv_rcs <- lmer(
+    vt_per_kg_ibw ~
+      sex_category * rcs(height_inches,  c(60, 63, 66, 69, 72)) +
+      age_at_admission +
+      laps2 +
+      # race_category +
+      pf_ratio +
+      ph +          # Include ph in the model
+      pco2 +        # Include pco2 in the model
+      (1 | patient_id),
+    data = htvv_analysis
+  )
+}
+
+
+if (hosp_id_count > 1) {
+  # Fit the mixed-effects model with random intercepts for patients and hospitals, including pH and pCO2
+  mixed_model_sex_interaction_height_ltvv_rcs <- lmer(
+    vt_per_kg_ibw ~
+      sex_category * rcs(height_inches,  c(60, 63, 66, 69, 72)) +
+      age_at_admission +
+      laps2 +
+      # race_category +
+      pf_ratio +
+      ph +          # Include ph in the model
+      pco2 +        # Include pco2 in the model
+      hospital_id +
+      (1 | patient_id),
+    data = htvv_analysis
+  )
+}
+
+# Tidy the mixed model results
+model_results <- tidy(mixed_model_sex_interaction_height_ltvv_rcs, effects = "fixed", conf.int = TRUE)
+print(model_results)
+
+# Select relevant columns and rename them
+results_sex_interaction_height_ltvv_rcs <- model_results %>%
+  dplyr::select(
+    Variable = term, Estimate = estimate, StdError = std.error, 
+    LowerCI = conf.low, UpperCI = conf.high, DegreesFreedom = df, 
+    Statistic = statistic, PValue = p.value
+  ) %>%
+  # Add StudyID and Model columns
+  mutate(
+    StudyID = "sex_interaction_height_ltvv_rcs",  
+    Model = "Male * rcs(Height) ~ Vt",
+    Site = site_name
+  ) %>%
+  # Rearrange columns
+  dplyr::select(
+    StudyID, Model, Site, Variable, Estimate, StdError, 
+    LowerCI, UpperCI, DegreesFreedom, Statistic, PValue
+  )
+
+write.csv(results_sex_interaction_height_ltvv_rcs, paste0("output/final/model_coefs_sex_interaction_height_RCS_ltvv__", site_name, "_", Sys.Date(), ".csv"), row.names = FALSE)
+
+
+
+## ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+htvv_analysis <- htvv_analysis |> 
+  mutate(htvv = (fifelse(vt_per_kg_ibw > 8, 1, 0)))
+
+
+##########################
+### No Height BINARY ##
+#########################
+if (hosp_id_count == 1) {
+  # Fit the mixed-effects model with random intercepts for patients and hospitals, including pH and pCO2
+  mixed_model_sex_category_bin <- glm(
+    htvv ~
+      sex_category +
+      age_at_admission +
+      laps2 +
+      pf_ratio +
+      ph +          # Include ph in the model
+      pco2,        # Include pco2 in the model
+    data = htvv_analysis,
+    family = binomial(link = "logit")
+  )
+}
+
+
+if (hosp_id_count > 1) {
+  # Fit the mixed-effects model with random intercepts for patients and hospitals, including pH and pCO2
+  mixed_model_sex_category_bin <- glm(
+    htvv ~
+      sex_category +
+      age_at_admission +
+      laps2 +
+      # race_category +
+      pf_ratio +
+      ph +          # Include ph in the model
+      pco2 +        # Include pco2 in the model
+      hospital_id, 
+    data = htvv_analysis,
+    family = binomial(link = "logit")
+  )
+}
+
+# Tidy the mixed model results
+model_results <- tidy(mixed_model_sex_category_bin, effects = "fixed", conf.int = TRUE)
+print(model_results)
+
+# Select relevant columns and rename them
+results_sex_category_bin <- model_results %>%
+  dplyr::select(
+    Variable = term, Estimate = estimate, StdError = std.error, 
+    LowerCI = conf.low, UpperCI = conf.high, 
+    # DegreesFreedom = df, 
+    Statistic = statistic, PValue = p.value
+  ) %>%
+  # Add StudyID and Model columns
+  mutate(
+    StudyID = "sex_category_bin",  
+    Model = "Male ~ HTVV (Binary)",
+    Site = site_name
+  ) %>%
+  # Rearrange columns
+  dplyr::select(
+    StudyID, Model, Site, Variable, Estimate, StdError, 
+    LowerCI, UpperCI, 
+    # DegreesFreedom, 
+    Statistic, PValue
+  )
+
+write.csv(results_sex_category_bin, paste0("output/final/model_coefs_sex_category_bin_ltvv__", site_name, "_", Sys.Date(), ".csv"), row.names = FALSE)
+
+
+## ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+##########################
+### sex_category_height_bin  ##
+#########################
+if (hosp_id_count == 1) {
+  # Fit the mixed-effects model with random intercepts for patients and hospitals, including pH and pCO2
+  mixed_model_sex_category_height_bin <- glm(
+    htvv ~
+      sex_category + height_inches +
+      age_at_admission +
+      laps2 +
+      pf_ratio +
+      ph +          # Include ph in the model
+      pco2,        # Include pco2 in the model
+    data = htvv_analysis,
+    family = binomial(link = "logit")
+  )
+}
+
+
+if (hosp_id_count > 1) {
+  # Fit the mixed-effects model with random intercepts for patients and hospitals, including pH and pCO2
+  mixed_model_sex_category_height_bin <- glm(
+    htvv ~
+      sex_category + height_inches +
+      age_at_admission +
+      laps2 +
+      # race_category +
+      pf_ratio +
+      ph +          # Include ph in the model
+      pco2 +        # Include pco2 in the model
+      hospital_id, 
+    data = htvv_analysis,
+    family = binomial(link = "logit")
+  )
+}
+
+# Tidy the mixed model results
+model_results <- tidy(mixed_model_sex_category_height_bin, effects = "fixed", conf.int = TRUE)
+print(model_results)
+
+# Select relevant columns and rename them
+results_sex_category_height_bin <- model_results %>%
+  dplyr::select(
+    Variable = term, Estimate = estimate, StdError = std.error, 
+    LowerCI = conf.low, UpperCI = conf.high, 
+    # DegreesFreedom = df, 
+    Statistic = statistic, PValue = p.value
+  ) %>%
+  # Add StudyID and Model columns
+  mutate(
+    StudyID = "sex_category_height_bin",  
+    Model = "Male + Height ~ HTVV (Binary)",
+    Site = site_name
+  ) %>%
+  # Rearrange columns
+  dplyr::select(
+    StudyID, Model, Site, Variable, Estimate, StdError, 
+    LowerCI, UpperCI, 
+    # DegreesFreedom, 
+    Statistic, PValue
+  )
+
+write.csv(results_sex_category_height_bin, paste0("output/final/model_coefs_sex_category_height_bin_ltvv__", site_name, "_", Sys.Date(), ".csv"), row.names = FALSE)
+
+
+## ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+##########################
+### sex_interaction_height_rcs_bin  ##
+#########################
+if (hosp_id_count == 1) {
+  # Fit the mixed-effects model with random intercepts for patients and hospitals, including pH and pCO2
+  mixed_model_sex_interaction_height_bin <- glm(
+    htvv ~
+      sex_category*height_inches +
+      age_at_admission +
+      laps2 +
+      pf_ratio +
+      ph +          # Include ph in the model
+      pco2,        # Include pco2 in the model
+    data = htvv_analysis,
+    family = binomial(link = "logit")
+  )
+}
+
+
+if (hosp_id_count > 1) {
+  # Fit the mixed-effects model with random intercepts for patients and hospitals, including pH and pCO2
+  mixed_model_sex_interaction_height_bin <- glm(
+    htvv ~
+      sex_category*height_inches +
+      age_at_admission +
+      laps2 +
+      # race_category +
+      pf_ratio +
+      ph +          # Include ph in the model
+      pco2 +        # Include pco2 in the model
+      hospital_id, 
+    data = htvv_analysis,
+    family = binomial(link = "logit")
+  )
+}
+
+# Tidy the mixed model results
+model_results <- tidy(mixed_model_sex_interaction_height_bin, effects = "fixed", conf.int = TRUE)
+print(model_results)
+
+# Select relevant columns and rename them
+results_sex_interaction_height_bin <- model_results %>%
+  dplyr::select(
+    Variable = term, Estimate = estimate, StdError = std.error, 
+    LowerCI = conf.low, UpperCI = conf.high, 
+    # DegreesFreedom = df, 
+    Statistic = statistic, PValue = p.value
+  ) %>%
+  # Add StudyID and Model columns
+  mutate(
+    StudyID = "sex_interaction_height_bin",  
+    Model = "Male * Height ~ HTVV (Binary)",
+    Site = site_name
+  ) %>%
+  # Rearrange columns
+  dplyr::select(
+    StudyID, Model, Site, Variable, Estimate, StdError, 
+    LowerCI, UpperCI, 
+    # DegreesFreedom, 
+    Statistic, PValue
+  )
+
+write.csv(results_sex_interaction_height_bin, paste0("output/final/model_coefs_sex_interaction_height_bin_ltvv__", site_name, "_", Sys.Date(), ".csv"), row.names = FALSE)
+
+
+## ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+##########################
+### sex_interaction_height_rcs_bin  ##
+#########################
+if (hosp_id_count == 1) {
+  # Fit the mixed-effects model with random intercepts for patients and hospitals, including pH and pCO2
+  mixed_model_sex_interaction_height_rcs_bin <- glm(
+    htvv ~
+      sex_category * rcs(height_inches, c(60, 63, 66, 69, 72)) +
+      age_at_admission +
+      laps2 +
+      pf_ratio +
+      ph +          # Include ph in the model
+      pco2,        # Include pco2 in the model
+    data = htvv_analysis,
+    family = binomial(link = "logit")
+  )
+}
+
+
+if (hosp_id_count > 1) {
+  # Fit the mixed-effects model with random intercepts for patients and hospitals, including pH and pCO2
+  mixed_model_sex_interaction_height_rcs_bin <- glm(
+    htvv ~
+      sex_category * rcs(height_inches, c(60, 63, 66, 69, 72)) +
+      age_at_admission +
+      laps2 +
+      # race_category +
+      pf_ratio +
+      ph +          # Include ph in the model
+      pco2 +        # Include pco2 in the model
+      hospital_id, 
+    data = htvv_analysis,
+    family = binomial(link = "logit")
+  )
+}
+
+# Tidy the mixed model results
+model_results <- tidy(mixed_model_sex_interaction_height_rcs_bin, effects = "fixed", conf.int = TRUE)
+print(model_results)
+
+# Select relevant columns and rename them
+results_sex_interaction_height_rcs_bin <- model_results %>%
+  dplyr::select(
+    Variable = term, Estimate = estimate, StdError = std.error, 
+    LowerCI = conf.low, UpperCI = conf.high, 
+    # DegreesFreedom = df, 
+    Statistic = statistic, PValue = p.value
+  ) %>%
+  # Add StudyID and Model columns
+  mutate(
+    StudyID = "sex_interaction_height_rcs_bin",  
+    Model = "Male * rcs(Height) ~ HTVV (Binary)",
+    Site = site_name
+  ) %>%
+  # Rearrange columns
+  dplyr::select(
+    StudyID, Model, Site, Variable, Estimate, StdError, 
+    LowerCI, UpperCI, 
+    # DegreesFreedom, 
+    Statistic, PValue
+  )
+
+write.csv(results_sex_interaction_height_rcs_bin, paste0("output/final/model_coefs_sex_interaction_height_rcs_bin_ltvv__", site_name, "_", Sys.Date(), ".csv"), row.names = FALSE)
+
+
+## ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+# # Create a data frame for prediction
+# height_range <- seq(min(htvv_analysis$height_inches, na.rm = TRUE), max(htvv_analysis$height_inches, na.rm = TRUE), length.out = 100)
+# 
+# 
+# # Get median or typical values for other continuous covariates
+# median_age <- median(htvv_analysis$age_at_admission, na.rm = TRUE)
+# median_laps2 <- median(htvv_analysis$laps2, na.rm = TRUE)
+# median_pf_ratio <- median(htvv_analysis$pf_ratio, na.rm = TRUE)
+# median_ph <- median(htvv_analysis$ph, na.rm = TRUE)
+# median_pco2 <- median(htvv_analysis$pco2, na.rm = TRUE)
+# 
+# # Use the most frequent value for categorical variables
+# common_race <- names(sort(table(htvv_analysis$race_category), decreasing = TRUE))[1]
+# 
+# 
+# # Create new data frame for predictions
+# new_data <- expand.grid(
+#   height_inches = height_range,
+#   sex_category = unique(htvv_analysis$sex_category),
+#   age_at_admission = median_age,
+#   laps2 = median_laps2,
+#   pf_ratio = median_pf_ratio,
+#   ph = median_ph,
+#   # race_category = common_race,
+#   pco2 = median_pco2
+# )
+# 
+# if(hosp_id_count > 1){
+#   common_hospital <- names(sort(table(htvv_analysis$hospital_id), decreasing = TRUE))[1]
+#   
+#   new_data$hospital_id <- common_hospital
+# }
+# 
+
+
+min_height <- round(min(htvv_analysis$height_inches, na.rm = TRUE))
+max_height <- round(max(htvv_analysis$height_inches, na.rm = TRUE))
+
+
+# Generate predictions using ggeffects
+predictions_model11 <- ggpredict(mixed_model_sex_category_ltvv, terms = c("sex_category"))
+predictions_model11$Model <- "Male ~ Vt" 
+# changing things so we can row bind... this model doesn't have height 
+predictions_model1 <- predictions_model11 |> 
+  mutate(group = fcase(x == "female", "female", default = "male")) |> 
+  mutate(x = 0) |> 
+  filter(!is.na(group))
+
+# Create a sequence of height values
+height_seq <- seq(min_height, max_height, length.out = 200)
+
+# Expand Model 1 predictions across the height range
+predictions_model1_expanded <- predictions_model1 %>%
+  # rename(predicted = predicted, sex_category = x) %>%
+  # select(sex_category, predicted, conf.low, conf.high, Model) %>%
+  crossing(height_inches = height_seq) |> 
+  select(-x) |> 
+  mutate(x = height_inches)
+
+
+
+predictions_model2 <- ggpredict(mixed_model_sex_category_height_ltvv, terms = c("height_inches [all]", "sex_category"))
+predictions_model2$Model <- "Male + Height ~ Vt"
+
+predictions_model3 <- ggpredict(mixed_model_sex_interaction_height_ltvv, terms = c("height_inches [all]", "sex_category"))
+predictions_model3$Model <- "Male * Height ~ Vt"
+
+predictions_model4 <- ggpredict(mixed_model_sex_interaction_height_ltvv_rcs, terms = c("height_inches [all]", "sex_category"))
+predictions_model4$Model <- "Male * rcs(Height) ~ Vt"
+
+
+
+# Generate predictions using ggeffects
+predictions_model55 <- ggpredict(mixed_model_sex_category_bin, terms = c("sex_category"))
+predictions_model55$Model <- "Male ~ HTVV (Binary)" 
+# changing things so we can row bind... this model doesn't have height 
+predictions_model5 <- predictions_model55 |> 
+  mutate(group = fcase(x == "female", "female", default = "male")) |> 
+  mutate(x = 0) |> 
+  filter(!is.na(group))
+
+# Create a sequence of height values
+height_seq <- seq(min_height, max_height, length.out = 200)
+
+# Expand Model 1 predictions across the height range
+predictions_model5_expanded <- predictions_model5 %>%
+  # rename(predicted = predicted, sex_category = x) %>%
+  # select(sex_category, predicted, conf.low, conf.high, Model) %>%
+  crossing(height_inches = height_seq) |> 
+  select(-x) |> 
+  mutate(x = height_inches)
+
+
+predictions_model6 <- ggpredict(mixed_model_sex_category_height_bin, terms = c("height_inches [all]", "sex_category"))
+predictions_model6$Model <- "Male + Height ~ HTVV (Binary)"
+
+predictions_model7 <- ggpredict(mixed_model_sex_interaction_height_bin, terms = c("height_inches [all]", "sex_category"))
+predictions_model7$Model <- "Male * Height ~ HTVV (Binary)"
+
+predictions_model8 <- ggpredict(mixed_model_sex_interaction_height_rcs_bin, terms = c("height_inches [all]", "sex_category"))
+predictions_model8$Model <- "Male * rcs(Height) ~ HTVV (Binary)"
+
+
+# Combine predictions
+# Combine all predictions
+all_predictions <- bind_rows(
+  predictions_model1_expanded,
+  predictions_model2,
+  predictions_model3,
+  predictions_model4,
+  predictions_model5_expanded,
+  predictions_model6,
+  predictions_model7,
+  predictions_model8,
+  
+) |> as.data.frame() |> 
+    mutate(health_system = site_name) 
+
+
+write.csv(all_predictions, paste0("output/final/model_preds_sex_category_height_ltvv__", site_name, "_", Sys.Date(), ".csv"), row.names = FALSE)
+
+
+
+# 
+# Additional Considerations
+# Interpreting Model 1 Predictions:
+# 
+# Since height_inches is not included in Model 1, the predictions do not vary with height_inches. By assigning the mean height_inches value, we can include Model 1 in the same plot for comparison purposes.
+# Understanding the Plot:
+# 
+# Model 1: Horizontal lines representing the predicted values for each sex_category across the range of height_inches.
+# Models 2, 3, and 4: Lines showing how the predicted values change with height_inches for each sex_category.
+# Alternative Visualization:
+# 
+# If including Model 1 in this plot seems confusing, you might choose to create separate plots or use different visual cues (e.g., dashed lines) to differentiate it.
+
+# Ensure Model is a factor
+all_predictions_continuous <- all_predictions |> 
+  filter(!str_detect(Model, "Binary")) |> 
+  mutate(Model = factor(Model)) |> 
+  mutate(sex_category = group) |> 
+  mutate(height_inches = x)
+
+
+
+
+# Plot all models together
+ggplot(all_predictions_continuous, aes(x = height_inches, y = predicted, color = sex_category)) +
+  geom_line(size = 1) +
+  facet_wrap(~ Model) +
+  labs(
+    title = "Predicted VT per kg IBW by Height and Sex Category",
+    x = "Height (inches)",
+    y = "Predicted VT per kg IBW",
+    color = "Sex Category"
+  ) +
+    scale_x_continuous(
+    limits = c(min_height, max_height),
+    breaks = height_breaks,
+    minor_breaks = NULL  # Remove minor grid lines if desired
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    plot.title = element_text(size = 14, face = "bold"),
+    strip.text = element_text(size = 12, face = "bold")
+  )
+
+
+
+# Ensure Model is a factor
+all_predictions_binary <- all_predictions |> 
+  filter(str_detect(Model, "Binary")) |> 
+  mutate(Model = factor(Model)) |> 
+  mutate(sex_category = group) |> 
+  mutate(height_inches = x)
+
+
+
+
+# Plot all models together
+ggplot(all_predictions_binary, aes(x = height_inches, y = predicted, color = sex_category)) +
+  geom_line(size = 1) +
+  facet_wrap(~ Model) +
+  labs(
+    title = "Predicted VT per kg IBW by Height and Sex Category",
+    x = "Height (inches)",
+    y = "Predicted VT per kg IBW",
+    color = "Sex Category"
+  ) +
+    scale_x_continuous(
+    limits = c(min_height, max_height),
+    breaks = height_breaks,
+    minor_breaks = NULL  # Remove minor grid lines if desired
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    plot.title = element_text(size = 14, face = "bold"),
+    strip.text = element_text(size = 12, face = "bold")
+  )
+
+
+
+# 
+# 
+# # Aggregate data to patient level
+# patient_level_data <- htvv_step1 %>%
+#   group_by(clif_hospitalizations_joined_id) %>%
+#   summarise(
+#     # Demographics (take first non-missing value)
+#     sex_category = ffirst(sex_category),
+#     age_at_admission = ffirst(age_at_admission),
+#     race_category = ffirst(race_category),
+#     hospital_id = ffirst(hospital_id),
+#     
+#     # Outcome variables
+#     mortality_enc = first(na.omit(mortality_enc)),
+#     
+#     # Clinical scores (e.g., worst LAPS2 score)
+#     max_laps2 = max(laps2, na.rm = TRUE),
+#     
+#     # Tidal volume summary statistics
+#     mean_vt_per_kg_ibw = mean(vt_per_kg_ibw, na.rm = TRUE),
+#     median_vt_per_kg_ibw = median(vt_per_kg_ibw, na.rm = TRUE),
+#     max_vt_per_kg_ibw = max(vt_per_kg_ibw, na.rm = TRUE),
+#     min_vt_per_kg_ibw = min(vt_per_kg_ibw, na.rm = TRUE),
+#     
+#     # Proportion of hours with high tidal volume (>8 mL/kg)
+#     prop_high_vt = mean(vt_per_kg_ibw > 8, na.rm = TRUE)
+#   ) %>%
+#   ungroup()
+
+
+
+## ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+run_vt_bin_analysis <- function(interaction_term = FALSE) {
+  
+  message("Running VT Bin Analysis for Mortality and VFDs...")
+
+  # ---- Incorporate Lab Data ----
+  vt_bin_data <- first_intubation_data %>%
+      # only hospitals that have enough traffic
+  filter(hospital_id %in% hospital_filter) |> 
+    filter(vent_episode_id == 1) %>%
+    mutate(vt_cckg = tidal_volume_set / ibw) %>%
+    mutate(vt_bin = case_when(
+      vt_cckg <  5  ~ "<5 cc/kg",
+      vt_cckg <  6  ~ "5-6 cc/kg",
+      vt_cckg <  7  ~ "6-7 cc/kg",
+      vt_cckg <  8  ~ "7-8 cc/kg",
+      vt_cckg <  9  ~ "8-9 cc/kg",
+      vt_cckg < 10  ~ "9-10 cc/kg",
+      vt_cckg < 11  ~ "10-11 cc/kg",
+      vt_cckg >= 11  ~ ">=11 cc/kg",
+      TRUE          ~ NA_character_
+    )) %>%
+    filter(!is.na(vt_bin)) %>%
+    left_join(clif_labs |> filter(lab_category %in% c("ph_arterial", "pco2_arterial")) |> 
+                  mutate(
+    recorded_date = date(lab_result_dttm),  # Extract date from recorded timestamp
+    recorded_hour = hour(lab_result_dttm)  # Extract hour from timestamp
+  ) |> 
+    mutate(
+      ph = fifelse(lab_category == "ph_arterial", lab_value_numeric, NA_real_),  # Assuming lab_name stores 'pH'
+      pco2 = fifelse(lab_category == "pco2_arterial", lab_value_numeric, NA_real_)  # Assuming lab_name stores 'pCO2_arterial'
+    ) |> 
+    dplyr::select(
+      clif_hospitalizations_joined_id,
+      recorded_date,
+      recorded_hour,
+      ph,
+      pco2
+    ), 
+  by = c("clif_hospitalizations_joined_id", "recorded_date", "recorded_hour")) |> 
+    filter(hospital_id %in% hospital_filter) 
+
+  # ---- Aggregate to Patient Level ----
+   # Get worst values in the first 24 hours
+  vt_bin_data_patient <- vt_bin_data |> 
+    filter(vent_episode_hour_seq < 24) %>%
+    group_by(clif_hospitalizations_joined_id) %>%
+    dplyr::summarize(
+      vt_bin = ffirst(vt_bin),
+      age_at_admission = ffirst(age_at_admission),
+      sex_category = ffirst(sex_category),
+      hospital_id = ffirst(hospital_id),
+      mortality_enc = ffirst(mortality_enc),
+      vent_episode_duration_hours = ffirst(vent_episode_duration_hours),
+      
+      # Get worst values for lab parameters
+      worst_pf_ratio = fmin(pf_ratio, na.rm = TRUE),
+      worst_sf_ratio = fmin(sf_ratio, na.rm = TRUE),
+      worst_laps2 = fmax(laps2, na.rm = TRUE),
+      worst_ph = min(ph, na.rm = TRUE),
+      worst_pco2 = max(pco2, na.rm = TRUE),
+      
+      # Total ventilator days
+      total_ventilator_days = max(vent_episode_hour_seq, na.rm = TRUE) / 24
+    ) %>%
+    
+    # Ensure no missing lab values (replace with median if needed)
+    mutate(across(c(worst_pf_ratio, worst_sf_ratio, worst_laps2, worst_ph, worst_pco2),
+                  ~ replace_na(., median(., na.rm = TRUE)))) %>%    
+    mutate(across(c(worst_pf_ratio, worst_sf_ratio, worst_laps2, worst_ph, worst_pco2),
+                  ~ replace_inf(., median(., na.rm = TRUE)))) %>%
+    
+    # Calculate Ventilator-Free Days (VFDs)
+    mutate(VFDs = case_when(
+      mortality_enc == 1 ~ 0,                        # If the patient died, VFDs = 0
+      total_ventilator_days >= 28 ~ 0,               # If ventilated for >=28 days, VFDs = 0
+      TRUE ~ 28 - total_ventilator_days              # Otherwise, VFDs = 28 - total ventilator days
+    ))
+
+
+  # ---- Mortality Model ----
+  mortality_formula <- "mortality_enc ~ vt_bin + age_at_admission + sex_category + worst_laps2 + worst_pf_ratio + worst_sf_ratio + worst_ph + worst_pco2"
+  if (hosp_id_count > 1) mortality_formula <- paste(mortality_formula, "+ hospital_id")
+
+  mortality_model <- glm(as.formula(mortality_formula), data = vt_bin_data_patient, family = binomial())
+
+  mortality_results <- broom::tidy(mortality_model, conf.int = TRUE, exponentiate = TRUE) %>%
+    mutate(variable = "mortality_vt_bin", site = site_name)
+
+  suffix <- ifelse(interaction_term, "interaction", "no_interaction")
+  mortality_filename <- paste0("output/final/model_coefs_mortality_vt_bin__", suffix, "__", site_name, "_", Sys.Date(), ".csv")
+  write.csv(mortality_results, file = mortality_filename, row.names = FALSE)
+  message("Saved mortality VT bin coefficients!")
+
+  # ---- VFD Model ----
+  vfd_formula <- "VFDs ~ vt_bin + age_at_admission + sex_category + worst_laps2 + worst_pf_ratio + worst_sf_ratio + worst_ph + worst_pco2"
+  if (hosp_id_count > 1) vfd_formula <- paste(vfd_formula, "+ hospital_id")
+
+  vfd_model <- glm(as.formula(vfd_formula), data = vt_bin_data_patient, family = poisson())
+
+  vfd_results <- broom::tidy(vfd_model, conf.int = TRUE, exponentiate = TRUE) %>%
+    mutate(variable = "vfd_vt_bin", site = site_name)
+
+  vfd_filename <- paste0("output/final/model_coefs_vfd_vt_bin__", suffix, "__", site_name, "_", Sys.Date(), ".csv")
+  write.csv(vfd_results, file = vfd_filename, row.names = FALSE)
+  message("Saved VFD VT bin coefficients!")
+
+  # ---- Sensitivity Analyses ----
+
+  ## 1. **Exclude Early Deaths (first 48 hours)**
+  vt_bin_data_exclude_early_death <- vt_bin_data_patient %>%
+    filter(vent_episode_duration_hours >= 48)
+
+  mortality_model_early <- glm(as.formula(mortality_formula), data = vt_bin_data_exclude_early_death, family = binomial())
+  mortality_results_early <- broom::tidy(mortality_model_early, conf.int = TRUE, exponentiate = TRUE) %>%
+    mutate(variable = "mortality_vt_bin_exclude_early", site = site_name)
+
+  mortality_filename_early <- paste0("output/final/model_coefs_mortality_vt_bin_exclude_early__", suffix, "__", site_name, "_", Sys.Date(), ".csv")
+  write.csv(mortality_results_early, file = mortality_filename_early, row.names = FALSE)
+
+  ## 2. **Survivors-Only Analysis**
+  vt_bin_data_survivors <- vt_bin_data_patient %>%
+    filter(mortality_enc == 0)
+
+  vfd_survivor_model <- glm(as.formula(vfd_formula), data = vt_bin_data_survivors, family = poisson())
+
+  vfd_survivor_results <- broom::tidy(vfd_survivor_model, conf.int = TRUE, exponentiate = TRUE) %>%
+    mutate(variable = "vfd_survivors_vt_bin", site = site_name)
+
+  vfd_survivor_filename <- paste0("output/final/model_coefs_vfd_survivors_vt_bin__", suffix, "__", site_name, "_", Sys.Date(), ".csv")
+  write.csv(vfd_survivor_results, file = vfd_survivor_filename, row.names = FALSE)
+  message("Saved VFD VT bin coefficients for survivors!")
+
+  ## 3. **Exclude patients with short ventilation duration (<24 hours)**
+  vt_bin_data_24hr <- vt_bin_data_patient %>%
+    filter(vent_episode_duration_hours >= 24)
+
+  mortality_model_24hr <- glm(as.formula(mortality_formula), data = vt_bin_data_24hr, family = binomial())
+
+  mortality_results_24hr <- broom::tidy(mortality_model_24hr, conf.int = TRUE, exponentiate = TRUE) %>%
+    mutate(variable = "mortality_vt_bin_24hr", site = site_name)
+
+  mortality_filename_24hr <- paste0("output/final/model_coefs_mortality_vt_bin_24hr__", suffix, "__", site_name, "_", Sys.Date(), ".csv")
+  write.csv(mortality_results_24hr, file = mortality_filename_24hr, row.names = FALSE)
+
+  message("All sensitivity analyses saved!")
+
+  return(list(mortality = mortality_results, vfd = vfd_results, vfd_survivors = vfd_survivor_results))
+}
+
+# Run analysis
+run_vt_bin_analysis(interaction_term = FALSE)
+
+
+
+
+## ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+if ("mean_airway_pressure_obs" %in% names(df_resp_support_1)){
+
+OI_analysis <- df_oxygenation_index_analysis_prep |>
+  dplyr::select(clif_hospitalizations_joined_id, recorded_date, recorded_hour, time_on_ventilator = vent_episode_hour_seq, mortality, extubated) |>
+  left_join(df_oxygenation_index |> dplyr::select(clif_hospitalizations_joined_id, recorded_date, recorded_hour, OI = oxygenation_index)) |>
+  # keep censoring rows or when we have OI data
+  filter(!is.na(OI) | mortality == 1 | extubated == 1) |>
+  # mutate(day = floor(time_on_ventilator / 24)) |>
+  # group_by(clif_hospitalizations_joined_id, day) |>
+  # summarise(OI = max(OI),  # peak OI in each day
+  #           extubated = max(extubated),
+  #           mortality = max(mortality)) |>
+  # ungroup() |>
+  # rename(time_on_ventilator = day) |>
+  group_by(clif_hospitalizations_joined_id) |>
+  mutate(peak_OI = fmax(OI, na.rm = TRUE)) |>
+  ungroup() |>
+  dplyr::select(OI, mortality, time_on_ventilator, extubated, peak_OI) |>
+  filter(time_on_ventilator<600) |>
+  filter(!is.na(peak_OI))
+
+OI_analysis_group <- OI_analysis |>
+  mutate(OI_group = cut(peak_OI,
+                        breaks = c(-Inf, 5, 10, 20, 40, 80, Inf),
+                        labels = c("<5", "5-10", "10-20", "20-40", "40-80", ">80"))) |>
+  mutate(OI_group = factor(OI_group,
+                           levels = c("<5", "5-10", "10-20", "20-40", "40-80", ">80"))) |>
+  dplyr::select(-peak_OI)
+
+
+########## EXTUBATION
+# Kaplan-Meier survival analysis based on extubation
+km_fit <- survfit(Surv(time_on_ventilator, extubated) ~ 1, data = OI_analysis)
+
+# Extract the survival data
+km_data <- data.frame(time = km_fit$time, surv = km_fit$surv, lower = km_fit$lower, upper = km_fit$upper)
+
+# Plot the survival curve without the step function and with smoothed line and confidence intervals
+ggplot(km_data, aes(x = time, y = surv)) +
+  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.2, fill = "lightblue") +  # Add CI ribbon
+  geom_smooth(method = "loess", span = 0.2, se = FALSE, color = "red", size = 1) +  # Add smooth survival curve
+  labs(title = "Smoothed Kaplan-Meier Curve with Confidence Intervals",
+       x = "Time on Ventilator (hours)",
+       y = "Survival Probability") +
+  theme_minimal()
+
+
+# Kaplan-Meier survival analysis stratified by OI group
+km_fit_ext_group <- survfit(Surv(time_on_ventilator, extubated) ~ OI_group, data = OI_analysis_group)
+
+# Extract the survival data from the Kaplan-Meier object
+km_data_ext <- data.frame(
+  time = km_fit_ext_group$time,
+  surv = km_fit_ext_group$surv,
+  lower = km_fit_ext_group$lower,
+  upper = km_fit_ext_group$upper,
+  strata = rep(names(km_fit_ext_group$strata), km_fit_ext_group$strata)  # Correctly map strata names
+)
+# Assuming 'strata' in km_data_ext is a factor or character
+km_data_ext$strata <- factor(km_data_ext$strata, levels = c("OI_group=<5", "OI_group=5-10", "OI_group=10-20", "OI_group=20-40", "OI_group=40-80", "OI_group=>80"))
+
+
+# Plot the survival curve with a smooth line for each OI group using GAM smoothing
+ggplot(km_data_ext, aes(x = time, y = surv, color = strata, fill = strata)) +
+  geom_smooth(method = "gam", formula = y ~ s(x, bs = "cs"), se = FALSE, size = 1.5) +  # Smooth with GAM
+  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.2) +  # Add CI ribbon, auto-fills by group
+
+  labs(title = "Survival to Extubation Stratified by Peak OI",
+       x = "Time on Ventilator (hours)",
+       y = "Probability of Survival to Extubation") +
+  theme_minimal() +
+  theme(legend.position = "right",
+        plot.title = element_text(size = 14, face = "bold"),
+        axis.title = element_text(size = 12)) +
+  scale_color_brewer(palette = "Set1") +  # Set color palette for groups
+  scale_fill_brewer(palette = "Set1")  # Match fill with color for ribbon
+
+
+
+############### MORTALITY
+# Plot hazard function for death without extubation
+death_fit <- survfit(Surv(time_on_ventilator, mortality) ~ 1, data = OI_analysis)
+
+# Extract the survival data
+km_data_death <- data.frame(time = death_fit$time, surv = death_fit$surv, lower = death_fit$lower, upper = death_fit$upper)
+
+ggsurvplot(km_data_death, aes(x = time, y = surv)) +
+  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.2, fill = "lightblue") +  # Add CI ribbon
+  geom_smooth(method = "loess", span = 0.2, se = FALSE, color = "red", size = 1) +  # Add smooth survival curve
+  labs(title = "Smoothed Kaplan-Meier Curve with Confidence Intervals",
+       x = "Time on Ventilator (hours)",
+       y = "Survival Probability") +
+    theme_minimal()
+
+
+# Kaplan-Meier survival analysis stratified by OI group
+km_fit_mort_group <- survfit(Surv(time_on_ventilator, mortality) ~ OI_group, data = OI_analysis_group)
+
+# Extract the survival data from the Kaplan-Meier object
+km_data_mort <- data.frame(
+  time = km_fit_mort_group$time,
+  surv = km_fit_mort_group$surv,
+  lower = km_fit_mort_group$lower,
+  upper = km_fit_mort_group$upper,
+  strata = rep(names(km_fit_mort_group$strata), km_fit_mort_group$strata)  # Correctly map strata names
+)
+# Assuming 'strata' in km_data_mort is a factor or character
+km_data_mort$strata <- factor(km_data_mort$strata, levels = c("OI_group=<5", "OI_group=5-10", "OI_group=10-20", "OI_group=20-40", "OI_group=40-80", "OI_group=>80"))
+
+
+# Plot the survival curve with a smooth line for each OI group using GAM smoothing
+ggplot(km_data_mort, aes(x = time, y = surv, color = strata, fill = strata)) +
+  geom_smooth(method = "gam", formula = y ~ s(x, bs = "cs"), se = FALSE, size = 1.5) +  # Smooth with GAM
+  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.2) +  # Add CI ribbon, auto-fills by group
+
+  labs(title = "Survival to Extubation Stratified by Peak OI",
+       x = "Time on Ventilator (hours)",
+       y = "Probability of Survival to Extubation") +
+  theme_minimal() +
+  theme(legend.position = "right",
+        plot.title = element_text(size = 14, face = "bold"),
+        axis.title = element_text(size = 12)) +
+  scale_color_brewer(palette = "Set1") +  # Set color palette for groups
+  scale_fill_brewer(palette = "Set1")  # Match fill with color for ribbon
+
+
+
+
+
+
+# Combine both survival and death into one plot OI_analysis
+competing_risks <- survfit(Surv(time_on_ventilator, extubated + mortality) ~ 1, data = OI_analysis)
+
+ggsurvplot(competing_risks, data = OI_analysis,
+           title = "Competing Risk: Survival vs. Death",
+           xlab = "Time on Ventilator (days)",
+           ylab = "Cumulative Event Probability",
+           conf.int = TRUE)
+
+
+
+# Stratified survival curves by OI
+OI_analysis_test  <- OI_analysis |>
+  mutate(median_OI = median(OI, na.rm = TRUE)) |>
+  mutate(
+    OI_group = ifelse(OI >median_OI, "High OI", "Low OI")
+         )
+
+# Kaplan-Meier survival analysis stratified by OI
+km_oi_fit <- survfit(Surv(time_on_ventilator, extubated) ~ OI_group, data = OI_analysis_test)
+
+# Plot the stratified survival curves
+ggsurvplot(km_oi_fit, data = OI_analysis_test,
+           title = "Survival to Extubation Stratified by Oxygenation Index",
+           xlab = "Time on Ventilator (days)",
+           ylab = "Probability of Survival to Extubation",
+           conf.int = TRUE)
+
+
+}
+
+
+## ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+Sys.time()
+end.time.full <- Sys.time()
+full_time.taken <- round(end.time.full - start.time.full, 2)
+full_time.taken
+
+message("YOU DID IT... YOU ARE DONE!!!!  \n THANK YOU for being awesome and helping advance science through CLIF!!!")
+
