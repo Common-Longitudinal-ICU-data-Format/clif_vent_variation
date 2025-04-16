@@ -1,25 +1,4 @@
----
-title: "01_cohort_identification"
-author: Nick Ingraham
-date: today
-execute: 
-  echo: false
-format: 
-  html:
-    embed-resources: true
-    number-sections: true
-    toc: true
-    html-q-tags: true
-    code-fold: true
-editor: source
-editor_options: 
-  chunk_output_type: console
----
-
-
-# Cohort identification
-
-```{r}
+## -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 start.time.full <- Sys.time()
 
@@ -76,13 +55,9 @@ clif_hospitalization_start <- clif_hospitalization_start |>
   right_join(df_cohort_keep_start) 
 
 
-```
 
 
-
-## Fixing Hospitalization
-
-```{r}
+## -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #Create an Hospital Block ID - This is to Identify Continuous Hospitalizations When Patients Are Transferred Between Hospitals in One Health System
 #This code is intended be robust to various ways encounters may be coded in CLIF databases
 hospital_blocks <- clif_hospitalization_start |> 
@@ -192,10 +167,9 @@ clif_hospitalization <- clif_hospitalization_start |>
 
 
 
-```
 
-### Final cohorting with fixed clif_hospitalizations_joined_id
-```{r}
+
+## -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 clif_patient_start <-  read_data("clif_patient") |> 
   dplyr::select(patient_id, sex_category) |> 
@@ -277,12 +251,9 @@ clif_hospitalization <- clif_hospitalization |>
   
   
   
-```
 
 
-### Importing function
-
-```{r}
+## -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #~~~~~~~~~~
 # Importing function
 #~~~~~~~~~~
@@ -360,7 +331,6 @@ import_df <- function(x) {
       # Attempt to parse datetime using a common format, adjust based on your actual format
       df[[var]] <- ymd_hms(df[[var]], quiet = TRUE)
       print(var)
-      print(paste("✅", var, "converted to 23:59 in", local_tz, "without time shift"))
 
       if (!inherits(df[[var]], "POSIXct")) {
         
@@ -415,13 +385,9 @@ df_start_objects <- grep("_start$", all_objects, value = TRUE)
 # rm(list = df_start_objects)
 # gc()
 
-```
 
 
-
-### Importing tables
-
-```{r}
+## -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 #~~~~~~~~~~
 # Import data and cohort tables
@@ -582,11 +548,9 @@ clif_demographics_combined <- clif_patient |>
 
 
 
-```
 
-# Import QA checks
 
-```{r}
+## -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 # Check fio2_set
 fio2_mean <- mean(clif_respiratory_support$fio2_set, na.rm = TRUE) 
@@ -614,15 +578,9 @@ if(is.character(clif_vitals$vital_value)){
     mutate(vital_value = as.numeric(parse_number(vital_value)))
 }
 
-```
 
 
-
-# Cleaning Data
-
-## Hourly Sequence
-
-```{r}
+## -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #| label: cleaning up vent data
 
 
@@ -649,11 +607,9 @@ hour_sequence <- clif_respiratory_support |>
          recorded_hour = hour(recorded_dttm)) |> 
   ungroup()
 
-```
 
-## Quality Check & Clean + Waterfall
 
-```{r}
+## -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #~~~~~~~~~~~~~~~~
 ##~~ Quick QA and fixing missing values throughout
 #~~~~~~~~~~~~~~~~
@@ -886,11 +842,9 @@ df_resp_support_1 <- df_resp_support_1 |>
 
 ni_toc()
 
-```
 
-## Resp support 
 
-```{r}
+## -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 ni_tic()
 
@@ -1075,12 +1029,9 @@ df_resp_support <- df_resp_support_1 |>
   ) 
 
 ni_toc()
-```
 
 
-## Vitals / ibw / labs
-
-```{r}
+## -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 ######################
 ##~~ clean vitals and get ibw
@@ -1205,12 +1156,9 @@ df_ibw <- clif_vitals |>
   distinct()
 
 
-```
 
 
-## Trach Variation
-
-```{r}
+## -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
    # getting trach hospital (first one with trach == 1)
 trach_hospital_id <- df_resp_support |> 
@@ -1293,12 +1241,9 @@ df_trach_variation |> glimpse()
 
 #### should we get earliest trach and DROP everything after?
   
-```
 
 
-## CLIF hourly level data
-
-```{r}
+## -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 ##~~~~~~~~~~~~~
 ##~~ Hourly Data
@@ -1518,18 +1463,9 @@ hosp_id_count <- df_hourly_resp_support |> count(hospital_id) |> nrow()
 
 
 
-```
 
 
-
-
-
-# Laps2 Score
-
-
-## encounter data
-
-```{r}
+## -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 ### change to hospital_icu
 clif_adt_hospital <-  clif_adt |>
   mutate(location_category = factor(location_category,
@@ -1593,11 +1529,9 @@ df_encounter_laps2_temp1 <- clif_hospitalization |>
   )
 
 
-```
 
-## Anion Gap with 1 hour tolerance
 
-```{r}
+## -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 if(any(clif_labs$lab_category == "anion_gap", na.rm = TRUE)){
   
@@ -1703,12 +1637,9 @@ clif_labs <- clif_labs |>
 
 
 
-```
 
 
-## prelaps
-
-```{r}
+## -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 ############
 # Pre-Laps... want the most recent within 24 hours of admission
@@ -1918,17 +1849,9 @@ df_pre_laps_final  <- df_pre_laps_merging |>
     )) %>%
   dplyr::select(clif_hospitalizations_joined_id, p_death, high_risk)
 
-```
 
 
-The above has like 58% high risk... that seems too high
-See testing below but ultimately I think its ok to use the predictions as above and not the published ones below.  
-R2 is 17 (using GLM) vs 11 (using numbers from Escobar study) when doing glm(death ~ p_death) in isolation.  Despite having a high number of high risk (58% with glm vs 10% with escobar numbers), i think it will work out ok
-
-
-## laps2 labs ALL
-
-```{r}
+## -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 ##~~~~~~~~~~~~~~~~~~~~~
 # LAPS2 time
 ##~~~~~~~~~~~~~~~~~~~~~
@@ -2055,11 +1978,9 @@ df_laps2_prep2 <- df_laps2_prep1 |>
 
 
             
-```
 
-## Labs day one
 
-```{r}
+## -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 df_laps2_dayone_prep1 <- 
   df_encounter_laps2_temp1 |> 
   dplyr::select(clif_hospitalizations_joined_id, admission_dttm, discharge_dttm, dt_24hours_after_admit) |> 
@@ -2171,13 +2092,9 @@ df_laps2_final <- df_laps2_prep2 |> anti_join(df_laps2_dayone_prep2 |>
   filter(!is.na(lab_date))
 
   
-```
 
 
-## GCS
-
-
-```{r}
+## -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 
 
@@ -2208,11 +2125,9 @@ df_vitals_gcs <- clif_vitals |>
               bind_rows(df_gcs_merge_ready)
 
 
-```
 
-## vitals all
 
-```{r}
+## -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 df_laps2_vitals_prep1 <- 
   df_encounter_laps2_temp1 |> 
@@ -2275,12 +2190,9 @@ df_laps2_vitals_prep2 <- df_laps2_vitals_prep1 |>
 
 
 
-```
 
 
-## vitals day one
-
-```{r}
+## -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 
 df_laps2_vitals_dayone_prep1 <- 
@@ -2364,13 +2276,9 @@ df_laps2_vitals_final <- df_laps2_vitals_prep2 |> anti_join(df_laps2_vitals_dayo
 
 
 
-```
 
 
-
-## Laps2 code
-
-```{r}
+## -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 df_laps_calc <- df_laps2_final |> 
   # get same naming for date
@@ -2619,14 +2527,9 @@ clif_laps2_scores <- df_laps_calc |>
   
 
 
-```
 
 
-
-
-# Intermediate save
-
-```{r}
+## -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 # Define the function
 save_data_frames <- function(data_frame_names, output_dir = "output/intermediate/clean_db") {
   # Ensure the output directory exists
@@ -2691,10 +2594,9 @@ save(data_frames_to_save, file = file.path("output/intermediate/clean_db/data_fr
 
 # Call the function
 save_data_frames(data_frames_to_save)
-```
 
 
-```{r}
+## -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 Sys.time()
 end.time.full <- Sys.time()
@@ -2706,6 +2608,4 @@ message("##########################################
 You have completed Cohorting!!! Woohooo!!! \n You also have saved your data \n Please proceed on to 02_statistical_analysis script \n 
 FYI you can JUST run the 02_stats script if no changes are made to the cohort script in the future!!
 ##########################################")
-```
-
 

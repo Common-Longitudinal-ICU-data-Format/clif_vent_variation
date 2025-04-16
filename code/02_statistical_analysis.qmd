@@ -2953,7 +2953,7 @@ end.time.full <- Sys.time()
 full_time.taken <- round(end.time.full - start.time.full, 2)
 full_time.taken
 
-message("YOU DID IT... YOU ARE DONE!!!!")
+message("YOU DID IT... YOU ARE DONE!!!!  \n THANK YOU for being awesome and helping advance science through CLIF!!!")
 ```
 
 
