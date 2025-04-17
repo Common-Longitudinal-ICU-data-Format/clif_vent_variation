@@ -2638,6 +2638,7 @@ run_vt_bin_analysis <- function(interaction_term = FALSE) {
       TRUE          ~ NA_character_
     )) %>%
     filter(!is.na(vt_bin)) %>%
+    mutate(vt_bin = relevel(factor(vt_bin), ref = "6-7 cc/kg")) |>
     left_join(clif_labs |> filter(lab_category %in% c("ph_arterial", "pco2_arterial")) |> 
                   mutate(
     recorded_date = date(lab_result_dttm),  # Extract date from recorded timestamp
@@ -2663,7 +2664,7 @@ run_vt_bin_analysis <- function(interaction_term = FALSE) {
     filter(vent_episode_hour_seq < 24) %>%
     group_by(clif_hospitalizations_joined_id) %>%
     dplyr::summarize(
-      vt_bin = ffirst(vt_bin),
+      vt_bin = fmean(vt_bin, na.rm = TRUE),
       age_at_admission = ffirst(age_at_admission),
       sex_category = ffirst(sex_category),
       hospital_id = ffirst(hospital_id),

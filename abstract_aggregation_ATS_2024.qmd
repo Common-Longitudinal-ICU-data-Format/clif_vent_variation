@@ -1273,8 +1273,14 @@ ggsave("aggregate_data/presentation_outputs/regression_results/htvv_patient_outc
 mort_bin_objects <- mget(ls(pattern = "^model_coefs_mortality_vt_bin_exclude"))
 
 vt_bin_levels <- c(
-  "5-6 cc/kg", "6-7 cc/kg", "7-8 cc/kg", "8-9 cc/kg", 
-  "9-10 cc/kg", "10-11 cc/kg", ">=11 cc/kg"
+  "<5 cc/kg",
+  "5-6 cc/kg",
+  "6-7 cc/kg",
+  "7-8 cc/kg",
+  "8-9 cc/kg",
+  "9-10 cc/kg",
+  "10-11 cc/kg",
+  ">=11 cc/kg"
 )
 
 # Step 2: Combine into one dataset
@@ -1287,9 +1293,9 @@ mortality_by_bin <- combined_model_coefs_mort_bins |>
   mutate(
     vt_bin = str_remove(term, "vt_bin"),
     vt_bin = factor(vt_bin, levels = vt_bin_levels),
-    OR = exp(estimate),  # <-- transform here
-    CI_low = exp(conf.low),
-    CI_high = exp(conf.high)
+    OR = estimate,  # <-- transform here
+    CI_low = conf.low,
+    CI_high = conf.high
   ) |> 
   mutate(vt_bin = factor(vt_bin, levels = vt_bin_levels))
 
