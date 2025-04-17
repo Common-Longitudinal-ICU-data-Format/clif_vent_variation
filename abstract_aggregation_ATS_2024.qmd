@@ -545,10 +545,6 @@ height_breaks <- c(54, 60, 63, 66, 69, 72, 80)  # Corresponds to < 5 feet, 5-5�
 height_labels <- c("< 5 feet", "5-5’3”", "5’3”-5’6”", "5’6”-5’9”", "5’9”-6’0”", "> 6’3”")
 
 
-min_height <- round(min(model_preds_sex_category_height_ltvv$height_inches, na.rm = TRUE))
-max_height <- round(max(model_preds_sex_category_height_ltvv$height_inches, na.rm = TRUE))
-
-
 
 model_preds_sex_category_height_ltvv <-  model_preds_sex_category_height_ltvv |> 
   mutate(Model = factor(Model)) |> 
@@ -574,6 +570,10 @@ model_preds_sex_category_height_ltvv <-  model_preds_sex_category_height_ltvv |>
                             "m_hx_htvv", "m_hx_vt", 
                             "m_rcs_hx_htvv", "m_rcs_hx_vt"
                           )))
+
+
+min_height <- round(min(model_preds_sex_category_height_ltvv$height_inches, na.rm = TRUE))
+max_height <- round(max(model_preds_sex_category_height_ltvv$height_inches, na.rm = TRUE))
 
 
 # Ensure Model is a factor
