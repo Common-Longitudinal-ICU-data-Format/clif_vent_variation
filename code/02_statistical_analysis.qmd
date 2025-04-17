@@ -2638,7 +2638,7 @@ run_vt_bin_analysis <- function(interaction_term = FALSE) {
       TRUE          ~ NA_character_
     )) %>%
     filter(!is.na(vt_bin)) %>%
-    mutate(vt_bin = relevel(factor(vt_bin), ref = "6-7 cc/kg")) |>
+    # mutate(vt_bin = relevel(factor(vt_bin), ref = "6-7 cc/kg")) |>
     left_join(clif_labs |> filter(lab_category %in% c("ph_arterial", "pco2_arterial")) |> 
                   mutate(
     recorded_date = date(lab_result_dttm),  # Extract date from recorded timestamp
@@ -2664,7 +2664,7 @@ run_vt_bin_analysis <- function(interaction_term = FALSE) {
     filter(vent_episode_hour_seq < 24) %>%
     group_by(clif_hospitalizations_joined_id) %>%
     dplyr::summarize(
-      vt_bin = fmean(vt_bin, na.rm = TRUE),
+      vt_cckg = fmean(vt_cckg, na.rm = TRUE),
       age_at_admission = ffirst(age_at_admission),
       sex_category = ffirst(sex_category),
       hospital_id = ffirst(hospital_id),
@@ -2681,6 +2681,18 @@ run_vt_bin_analysis <- function(interaction_term = FALSE) {
       # Total ventilator days
       total_ventilator_days = max(vent_episode_hour_seq, na.rm = TRUE) / 24
     ) %>%
+        mutate(vt_bin = case_when(
+      vt_cckg <  5  ~ "<5 cc/kg",
+      vt_cckg <  6  ~ "5-6 cc/kg",
+      vt_cckg <  7  ~ "6-7 cc/kg",
+      vt_cckg <  8  ~ "7-8 cc/kg",
+      vt_cckg <  9  ~ "8-9 cc/kg",
+      vt_cckg < 10  ~ "9-10 cc/kg",
+      vt_cckg < 11  ~ "10-11 cc/kg",
+      vt_cckg >= 11  ~ ">=11 cc/kg",
+      TRUE          ~ NA_character_
+    )) %>%
+    filter(!is.na(vt_bin)) %>%
     
     # Ensure no missing lab values (replace with median if needed)
     mutate(across(c(worst_pf_ratio, worst_sf_ratio, worst_laps2, worst_ph, worst_pco2),
