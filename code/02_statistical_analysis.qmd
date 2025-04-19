@@ -249,7 +249,7 @@ ltvv_variation <- df_hourly_resp_support |>
   filter(vent_episode_duration_hours >= 24) |> 
   
   # filter down to a time
-  filter(vent_episode_hour_seq <= 24) |> 
+  # filter(vent_episode_hour_seq <= 24) |> 
   
   # getting Vt by ibw
   mutate(vt_cckg = tidal_volume_set / ibw) |> 
@@ -428,7 +428,7 @@ clif_demographics_table_start <- df_hourly_resp_support |>
 
 table_summary <- clif_demographics_table_start |>
   group_by(hospital_id) |>
-  summarise(N = n(),
+  dplyr::summarize(N = n(),
             Age               = clif_mean_r(age_at_admission),
             "Sex, Female"     = clif_counts(tolower(sex_category) == "female"),
             Race              = "",
@@ -1067,13 +1067,13 @@ run_analysis_for_variable_finalfit <- function(var_name, interaction_term = FALS
   model_data <- delta_var %>%
     left_join(first_intubation_data %>%
                 group_by(clif_hospitalizations_joined_id) %>%
-                summarise(mortality_enc = ffirst(mortality_enc),
+                dplyr::summarize(mortality_enc = ffirst(mortality_enc),
                           age_at_admission = ffirst(age_at_admission),
                           sex_category = ffirst(str_to_title(sex_category)), 
                           race_category = ffirst(str_to_title(race_category)), 
                           # ethnicity_category = first(ethnicity_category),
-                          hospital_id = ffirst(str_to_title(hospital_id))),
-              by = "clif_hospitalizations_joined_id")
+                          hospital_id = ffirst(str_to_title(hospital_id)))) |> 
+    mutate(sex_category = factor(sex_category, levels = c("Male", "Female")))
     
   # Ensure model_data is a dataframe for finalfit
   model_data <- as.data.frame(model_data)
@@ -1237,7 +1237,7 @@ intubation_data <- df_oxygenation_index_analysis_prep_temp |>
   # Aggregate the variable by day
   var_daily_testing <- intubation_data %>%
     group_by(clif_hospitalizations_joined_id, day, htvv_daily_percent) %>%
-    summarise(laps2_daily =  fmax(laps2, na.rm = TRUE)) %>%
+    dplyr::summarize(laps2_daily =  fmax(laps2, na.rm = TRUE)) %>%
     arrange(clif_hospitalizations_joined_id, day) %>%
     group_by(clif_hospitalizations_joined_id) %>%
     # Handle missing data by carrying forward previous day's value
@@ -1247,9 +1247,11 @@ intubation_data <- df_oxygenation_index_analysis_prep_temp |>
     # flag fill means that on day 1 it will subtract by itself (there is no lag) and delta will be zero
     mutate(delta_laps2_daily = laps2_daily - flag(laps2_daily, fill = laps2_daily)) %>%
     ungroup()
-### a way to test var_daily #################################  
+### a way to test var_daily #################################
+```
 
-
+## Daily Analysis with LAPS2/SF etc...
+```{r}
 # Updated function
 run_daily_analysis_for_variable_finalfit <- function(var_name, agg_func, interaction_term = FALSE) {
   
@@ -1268,13 +1270,15 @@ run_daily_analysis_for_variable_finalfit <- function(var_name, agg_func, interac
   # Calculate total ventilator hours per patient
   ventilator_hours <- intubation_data %>%
     group_by(clif_hospitalizations_joined_id) %>%
-    summarise(total_ventilator_hours = sum(vent_01, na.rm = TRUE)) %>%
-    mutate(total_ventilator_days = total_ventilator_hours / 24)
+    dplyr::summarize(total_ventilator_hours = sum(vent_01, na.rm = TRUE)) %>%
+    mutate(total_ventilator_days = total_ventilator_hours / 24) |> 
+    ungroup()
   
   # Get mortality status for each patient
   mortality_data <- intubation_data %>%
     group_by(clif_hospitalizations_joined_id) %>%
-    summarise(mortality_enc = ffirst(mortality_enc))
+    dplyr::summarize(mortality_enc = ffirst(mortality_enc)) |> 
+    ungroup()
   
   # Combine ventilator data and mortality data
   ventilator_data <- ventilator_hours %>%
@@ -1292,7 +1296,7 @@ run_daily_analysis_for_variable_finalfit <- function(var_name, agg_func, interac
   # Aggregate the variable by day
   var_daily <- intubation_data %>%
     group_by(clif_hospitalizations_joined_id, day, htvv_daily_percent) %>%
-    summarise(!!var_daily_name := agg_func(get(var_name), na.rm = TRUE)) %>%
+    dplyr::summarize(!!var_daily_name := agg_func(get(var_name), na.rm = TRUE)) %>%
     ungroup() |> 
     arrange(clif_hospitalizations_joined_id, day) %>%
     group_by(clif_hospitalizations_joined_id) %>%
@@ -1333,19 +1337,19 @@ run_daily_analysis_for_variable_finalfit <- function(var_name, agg_func, interac
   model_data <- model_data %>%
     left_join(intubation_data %>%
                 group_by(clif_hospitalizations_joined_id) %>%
-                summarise(
+                dplyr::summarize(
                   age_at_admission = ffirst(age_at_admission),
                   sex_category = ffirst(str_to_title(sex_category)), 
                   race_category = ffirst(str_to_title(race_category)), 
                   hospital_id = ffirst(str_to_title(hospital_id))
-                ), by = "clif_hospitalizations_joined_id")
+                ))
   
   # Ensure model_data is a dataframe
   model_data <- as.data.frame(model_data)
   
   # Convert categorical variables to factors
-  model_data$sex_category <- as.factor(model_data$sex_category)
-  model_data$race_category <- as.factor(model_data$race_category)
+ model_data$sex_category <- factor(model_data$sex_category, levels = c("Male", "Female"))
+ model_data$race_category <- as.factor(model_data$race_category)
   model_data$hospital_id <- as.factor(model_data$hospital_id)
   model_data$mortality_enc <- as.factor(model_data$mortality_enc)
   
@@ -1477,19 +1481,19 @@ run_daily_analysis_for_variable_finalfit <- function(var_name, agg_func, interac
   model_data <- model_data %>%
     left_join(intubation_data %>%
                 group_by(clif_hospitalizations_joined_id) %>%
-                summarise(
+                dplyr::summarize(
                   age_at_admission = ffirst(age_at_admission),
                   sex_category = ffirst(str_to_title(sex_category)), 
                   race_category = ffirst(str_to_title(race_category)), 
                   hospital_id = ffirst(str_to_title(hospital_id))
-                ), by = "clif_hospitalizations_joined_id")
+                ))
   
   # Ensure model_data is a dataframe
   model_data <- as.data.frame(model_data)
   
   # Convert categorical variables to factors
-  model_data$sex_category <- as.factor(model_data$sex_category)
-  model_data$race_category <- as.factor(model_data$race_category)
+ model_data$sex_category <- factor(model_data$sex_category, levels = c("Male", "Female"))
+ model_data$race_category <- as.factor(model_data$race_category)
   model_data$hospital_id <- as.factor(model_data$hospital_id)
   
   # --- Step 6: Prepare the Variables for the Model ---
@@ -1627,6 +1631,138 @@ for (var_info in variables) {
 ```
 
 
+
+## Landmark Analysis
+```{r}
+# Landmark Analysis Function
+run_daily_landmark_analysis_for_variable_finalfit <- function(landmark_days = c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 21, 28)) {
+
+  message("Running landmark analysis for sf_ratio and laps2")
+
+  results_mort_list <- list()
+  results_vfd_list <- list()
+
+  for (landmark_day in landmark_days) {
+
+    message(paste("Processing landmark day:", landmark_day))
+
+    # Summarize variables up to and on the landmark day
+    max_days <- intubation_data %>%
+      # filter(!is.na(tidal_volume_set)) |> 
+      group_by(clif_hospitalizations_joined_id) %>%
+      dplyr::summarize(max_day = max(day, na.rm = TRUE),
+                mortality_enc_full = ffirst(mortality_enc),
+                max_day_enc = ceiling(fmax(hour_sequence_from_first_vent_to_discharge / 24))) |> 
+      ungroup() |> 
+      mutate(death_day = fifelse(mortality_enc_full == 1, max_day_enc, 99999))    # Summarize variables up to and on the landmark day
+    
+    max_days_vent <- intubation_data %>%
+      filter(vent_01 == 1) |>
+      group_by(clif_hospitalizations_joined_id) %>%
+      dplyr::summarize(max_day_vent = max(day, na.rm = TRUE)) |> 
+      ungroup() 
+
+    landmark_data <- intubation_data %>%
+      # filter(!is.na(tidal_volume_set)) |> 
+      filter(day <= landmark_day) %>%
+      left_join(max_days, by = "clif_hospitalizations_joined_id") |> 
+      left_join(max_days_vent, by = "clif_hospitalizations_joined_id") |> 
+      mutate(
+        sex_category = str_to_title(sex_category),
+        hospital_id = str_to_title(hospital_id)
+      )
+    
+    model_data <- landmark_data |> 
+      group_by(clif_hospitalizations_joined_id, day) |> 
+      mutate(
+        VFDs = case_when(
+          death_day > landmark_day & death_day <= (landmark_day + 28) ~ 0,
+          max_day_vent >= (landmark_day + 28) ~ 0,
+          max_day_vent < (landmark_day + 28) ~ 28 - max_day_vent,
+          TRUE ~ NA
+        )
+      ) |>  
+      # drop trach data... they will be in the data will they are trach'd
+      filter(is.na(tracheostomy)) |>
+      dplyr::summarize(
+        daily_sf_ratio = if (all(is.na(sf_ratio))) NA_real_ else fmin(sf_ratio, na.rm = TRUE), # some days only have a few hours (the day they die... need NAs)
+        daily_laps2 = fmax(laps2, na.rm = TRUE),
+        htvv_cumulative = if (all(is.na(htvv_daily_percent))) 0 else fmean(htvv_daily_percent, na.rm = TRUE),
+        age_at_admission = ffirst(age_at_admission, na.rm = TRUE),
+        sex_category = ffirst(sex_category, na.rm = TRUE),
+        hospital_id = ffirst(hospital_id, na.rm = TRUE),
+        mortality_enc = as.integer(all(mortality_enc_full == 1 & max_day == landmark_day)),  
+        VFDs = ffirst(VFDs, na.rm = TRUE),
+        .groups = "drop"
+        )  |> 
+      distinct() |> 
+      ungroup() |> 
+      filter(day == landmark_day) 
+
+    # Format data# Formatmin_grid.C5_rules() data
+    model_data <- as.data.frame(model_data)
+ model_data$sex_category <- factor(model_data$sex_category, levels = c("Male", "Female"))
+ model_data$hospital_id <- as.factor(model_data$hospital_id)
+    model_data$mortality_enc <- as.factor(model_data$mortality_enc)
+    
+    message(paste0("number of rows in this model        = ", model_data |> nrow()))
+    message(paste0("number of encounters in this model  = ", model_data |> select(clif_hospitalizations_joined_id) |> nrow()))
+
+    explanatory <- c("daily_sf_ratio", "daily_laps2", "age_at_admission", "sex_category", "htvv_cumulative")
+    if (hosp_id_count > 1) explanatory <- c(explanatory, "hospital_id")
+
+    if (nlevels(factor(model_data$mortality_enc)) < 2) {
+      message("Skipping mortality model for day ", landmark_day, " (not enough variation in outcome)")
+      next
+    }
+    
+    ### if there are not enough patient rows we should move on and you can't run the model for that day... which is not a problem!
+    if (model_data |> nrow() < 100) {
+      message("Skipping mortality model for day ", landmark_day, " (not enough variation in outcome)")
+      next
+    }
+    
+    # Mortality Model
+    form_mort <- paste("mortality_enc ~", paste(explanatory, collapse = " + "))
+    fit_mort <- glm(formula = as.formula(form_mort), data = model_data, family = binomial(link = "logit"))
+    tidy_mort <- broom.mixed::tidy(fit_mort, conf.int = TRUE, exponentiate = TRUE) %>%
+      mutate(site = site_name, landmark_day = landmark_day)
+    
+    results_mort_list[[as.character(landmark_day)]] <- tidy_mort
+    
+    # # Save mortality results
+    # write.csv(tidy_mort, paste0("output/final/model_coefs_landmark_mortality_day_", landmark_day, "__", site_name, "_", Sys.Date(), ".csv"), row.names = FALSE)
+
+    # VFD Model
+    form_vfd <- paste("VFDs ~", paste(explanatory, collapse = " + "))
+    fit_vfd <- lm(formula = as.formula(form_vfd), data = model_data)
+    tidy_vfd <- broom::tidy(fit_vfd, conf.int = TRUE) %>%
+      mutate(site = site_name, landmark_day = landmark_day)
+    
+    results_vfd_list[[as.character(landmark_day)]] <- tidy_vfd
+
+    # Save VFD results
+    # write.csv(tidy_vfd, paste0("output/final/model_coefs_landmark_vfds_day_", landmark_day, "__", site_name, "_", Sys.Date(), ".csv"), row.names = FALSE)
+
+  }
+  
+ # Combine and write final CSVs
+  final_mort_df <- bind_rows(results_mort_list)
+  final_vfd_df <- bind_rows(results_vfd_list)
+
+  write.csv(final_mort_df, paste0("output/final/ALL_model_coefs_landmark_mortality_", site_name, "__", Sys.Date(), ".csv"), row.names = FALSE)
+  write.csv(final_vfd_df, paste0("output/final/ALL_model_coefs_landmark_vfds_", site_name, "__", Sys.Date(), ".csv"), row.names = FALSE)
+}
+
+# Run
+run_daily_landmark_analysis_for_variable_finalfit()
+
+
+
+```
+
+
+
 # Exposure over time Analysis to HTVV
 ```{r}
 # Calculate the worst oxygenation index in the first 24 hours
@@ -1634,7 +1770,7 @@ worst_in_24hr <- first_intubation_data %>%
   filter(vent_episode_id == 1) |> 
   filter(vent_episode_hour_seq <=24) %>%
   group_by(clif_hospitalizations_joined_id) %>%
-  summarise(
+  dplyr::summarize(
     worst_laps2_24hr = fmax(laps2, na.rm = TRUE),
     worst_sf_ratio = fmin(sf_ratio, na.rm = TRUE),
     worst_pf_ratio = fmin(pf_ratio, na.rm = TRUE),
@@ -1663,6 +1799,7 @@ htvv_step1 <- first_intubation_data |>
   mutate(event = within_48hr_death) |> 
   left_join(worst_in_24hr) |> 
   filter(!max_hours_in_24 < 24) |> 
+  mutate(sex_category = factor(sex_category, levels = c("male", "female"))) |> 
   distinct()
 
 
@@ -1741,7 +1878,7 @@ htvv_levels <- c(10, 30, 90, 500, 1000)
 
 # Predict survival curves for specific HTVV levels
 new_data <- data.frame(cumulative_htvv_hours = htvv_levels,
-                       sex_category = "male",  # Set other covariates (e.g., male)
+                       sex_category = "female",  # Set other covariates (e.g., male)
                        hospital_id = paste0("Hospital ",site_name," 1"),  # Set a specific hospital
                        worst_laps2_24hr = mean(htvv_step1$worst_laps2_24hr, na.rm = TRUE),
                        worst_sf_ratio = mean(htvv_step1$worst_sf_ratio, na.rm = TRUE))
@@ -1817,15 +1954,17 @@ htvv_analysis <- htvv_step1 %>%
     recorded_date,
     recorded_hour
   ) %>%
+  ## currently want complete cases with PF ratio... don't need the pco2 and ph to be complete
   drop_na() %>%
   left_join(clif_labs_htvv |> distinct(), by = join_by(clif_hospitalizations_joined_id,recorded_date,recorded_hour)) |> 
   mutate(
-    sex_category = as.factor(sex_category),
+    sex_category = factor(sex_category, levels= c("male", "female")),
     race_category = as.factor(race_category),
     hospital_id = as.factor(hospital_id),
     patient_id = as.factor(clif_hospitalizations_joined_id)  # Ensure patient_id is a factor
   ) |> 
-  left_join(clif_height |> dplyr::select(clif_hospitalizations_joined_id, height_inches))
+  left_join(clif_height |> dplyr::select(clif_hospitalizations_joined_id, height_inches)) |> 
+  distinct()
 
 # Summary statistics
 summary(htvv_analysis)
@@ -1848,7 +1987,7 @@ if (hosp_id_count == 1) {
       pf_ratio +
       ph +          # Include ph in the model
       pco2 +        # Include pco2 in the model
-      (1 | patient_id),
+    (1 | patient_id), 
     data = htvv_analysis
   )
 }
@@ -1866,7 +2005,7 @@ if (hosp_id_count > 1) {
       ph +          # Include ph in the model
       pco2 +        # Include pco2 in the model
       hospital_id +
-      (1 | patient_id),
+      (1 | patient_id), 
     data = htvv_analysis
   )
 }
@@ -1885,7 +2024,7 @@ results_sex_category_ltvv <- model_results %>%
   # Add StudyID and Model columns
   mutate(
     StudyID = "sex_category_ltvv",  
-    Model = "Male ~ Vt",
+    Model = "Female ~ Vt",
     Site = site_name
   ) %>%
   # Rearrange columns
@@ -1912,7 +2051,7 @@ if (hosp_id_count == 1) {
       pf_ratio +
       ph +          # Include ph in the model
       pco2 +        # Include pco2 in the model
-      (1 | patient_id),
+      (1 | patient_id), 
     data = htvv_analysis
   )
 }
@@ -1931,7 +2070,7 @@ if (hosp_id_count > 1) {
       ph +          # Include ph in the model
       pco2 +        # Include pco2 in the model
       hospital_id +
-      (1 | patient_id),
+      (1 | patient_id), 
     data = htvv_analysis
   )
 }
@@ -1950,7 +2089,7 @@ results_sex_category_height_ltvv <- model_results %>%
   # Add StudyID and Model columns
   mutate(
     StudyID = "sex_category_height_ltvv",  
-    Model = "Male + Height ~ Vt",
+    Model = "Female + Height ~ Vt",
     Site = site_name
   ) %>%
   # Rearrange columns
@@ -1981,7 +2120,7 @@ if (hosp_id_count == 1) {
       pf_ratio +
       ph +          # Include ph in the model
       pco2 +        # Include pco2 in the model
-      (1 | patient_id),
+      (1 | patient_id), 
     data = htvv_analysis
   )
 }
@@ -1999,7 +2138,7 @@ if (hosp_id_count > 1) {
       ph +          # Include ph in the model
       pco2 +        # Include pco2 in the model
       hospital_id +
-      (1 | patient_id),
+      (1 | patient_id), 
     data = htvv_analysis
   )
 }
@@ -2018,7 +2157,7 @@ results_sex_interaction_height_ltvv <- model_results %>%
   # Add StudyID and Model columns
   mutate(
     StudyID = "sex_interaction_height_ltvv",  
-    Model = "Male * Height ~ Vt",
+    Model = "Female * Height ~ Vt",
     Site = site_name
   ) %>%
   # Rearrange columns
@@ -2047,7 +2186,7 @@ if (hosp_id_count == 1) {
       pf_ratio +
       ph +          # Include ph in the model
       pco2 +        # Include pco2 in the model
-      (1 | patient_id),
+      (1 | patient_id), 
     data = htvv_analysis
   )
 }
@@ -2065,7 +2204,7 @@ if (hosp_id_count > 1) {
       ph +          # Include ph in the model
       pco2 +        # Include pco2 in the model
       hospital_id +
-      (1 | patient_id),
+      (1 | patient_id), 
     data = htvv_analysis
   )
 }
@@ -2084,7 +2223,7 @@ results_sex_interaction_height_ltvv_rcs <- model_results %>%
   # Add StudyID and Model columns
   mutate(
     StudyID = "sex_interaction_height_ltvv_rcs",  
-    Model = "Male * rcs(Height) ~ Vt",
+    Model = "Female * rcs(Height) ~ Vt",
     Site = site_name
   ) %>%
   # Rearrange columns
@@ -2101,8 +2240,7 @@ write.csv(results_sex_interaction_height_ltvv_rcs, paste0("output/final/model_co
 ```{r}
 
 htvv_analysis <- htvv_analysis |> 
-  mutate(htvv = (fifelse(vt_per_kg_ibw > 8, 1, 0)))
-
+  mutate(htvv = (fifelse(vt_per_kg_ibw > 8, 1, 0))) 
 
 ##########################
 ### No Height BINARY ##
@@ -2155,7 +2293,7 @@ results_sex_category_bin <- model_results %>%
   # Add StudyID and Model columns
   mutate(
     StudyID = "sex_category_bin",  
-    Model = "Male ~ HTVV (Binary)",
+    Model = "Female ~ HTVV (Binary)",
     Site = site_name
   ) %>%
   # Rearrange columns
@@ -2223,7 +2361,7 @@ results_sex_category_height_bin <- model_results %>%
   # Add StudyID and Model columns
   mutate(
     StudyID = "sex_category_height_bin",  
-    Model = "Male + Height ~ HTVV (Binary)",
+    Model = "Female + Height ~ HTVV (Binary)",
     Site = site_name
   ) %>%
   # Rearrange columns
@@ -2290,7 +2428,7 @@ results_sex_interaction_height_bin <- model_results %>%
   # Add StudyID and Model columns
   mutate(
     StudyID = "sex_interaction_height_bin",  
-    Model = "Male * Height ~ HTVV (Binary)",
+    Model = "Female * Height ~ HTVV (Binary)",
     Site = site_name
   ) %>%
   # Rearrange columns
@@ -2359,7 +2497,7 @@ results_sex_interaction_height_rcs_bin <- model_results %>%
   # Add StudyID and Model columns
   mutate(
     StudyID = "sex_interaction_height_rcs_bin",  
-    Model = "Male * rcs(Height) ~ HTVV (Binary)",
+    Model = "Female * rcs(Height) ~ HTVV (Binary)",
     Site = site_name
   ) %>%
   # Rearrange columns
@@ -2418,7 +2556,7 @@ max_height <- round(max(htvv_analysis$height_inches, na.rm = TRUE))
 
 # Generate predictions using ggeffects
 predictions_model11 <- ggpredict(mixed_model_sex_category_ltvv, terms = c("sex_category"))
-predictions_model11$Model <- "Male ~ Vt" 
+predictions_model11$Model <- "Female ~ Vt" 
 # changing things so we can row bind... this model doesn't have height 
 predictions_model1 <- predictions_model11 |> 
   mutate(group = fcase(x == "female", "female", default = "male")) |> 
@@ -2439,19 +2577,19 @@ predictions_model1_expanded <- predictions_model1 %>%
 
 
 predictions_model2 <- ggpredict(mixed_model_sex_category_height_ltvv, terms = c("height_inches [all]", "sex_category"))
-predictions_model2$Model <- "Male + Height ~ Vt"
+predictions_model2$Model <- "Female + Height ~ Vt"
 
 predictions_model3 <- ggpredict(mixed_model_sex_interaction_height_ltvv, terms = c("height_inches [all]", "sex_category"))
-predictions_model3$Model <- "Male * Height ~ Vt"
+predictions_model3$Model <- "Female * Height ~ Vt"
 
 predictions_model4 <- ggpredict(mixed_model_sex_interaction_height_ltvv_rcs, terms = c("height_inches [all]", "sex_category"))
-predictions_model4$Model <- "Male * rcs(Height) ~ Vt"
+predictions_model4$Model <- "Female * rcs(Height) ~ Vt"
 
 
 
 # Generate predictions using ggeffects
 predictions_model55 <- ggpredict(mixed_model_sex_category_bin, terms = c("sex_category"))
-predictions_model55$Model <- "Male ~ HTVV (Binary)" 
+predictions_model55$Model <- "Female ~ HTVV (Binary)" 
 # changing things so we can row bind... this model doesn't have height 
 predictions_model5 <- predictions_model55 |> 
   mutate(group = fcase(x == "female", "female", default = "male")) |> 
@@ -2471,13 +2609,13 @@ predictions_model5_expanded <- predictions_model5 %>%
 
 
 predictions_model6 <- ggpredict(mixed_model_sex_category_height_bin, terms = c("height_inches [all]", "sex_category"))
-predictions_model6$Model <- "Male + Height ~ HTVV (Binary)"
+predictions_model6$Model <- "Female + Height ~ HTVV (Binary)"
 
 predictions_model7 <- ggpredict(mixed_model_sex_interaction_height_bin, terms = c("height_inches [all]", "sex_category"))
-predictions_model7$Model <- "Male * Height ~ HTVV (Binary)"
+predictions_model7$Model <- "Female * Height ~ HTVV (Binary)"
 
 predictions_model8 <- ggpredict(mixed_model_sex_interaction_height_rcs_bin, terms = c("height_inches [all]", "sex_category"))
-predictions_model8$Model <- "Male * rcs(Height) ~ HTVV (Binary)"
+predictions_model8$Model <- "Female * rcs(Height) ~ HTVV (Binary)"
 
 
 # Combine predictions

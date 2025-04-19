@@ -858,6 +858,10 @@ df_resp_support_1 <- df_resp_support_1 |>
     #  essentially this is... DROP if n>1 and device_cat == NA
     !(n > 1 & is.na(device_category))) |> 
   
+  # random carried over bipap sometimes when there is trach next and there is vent before
+  filter(
+    !(device_category == "nippv" & lead(device_category == "trach collar") & lag(device_category != "nippv"))
+  ) |> 
 
   
   # filter if missing everything  
@@ -1307,6 +1311,9 @@ df_trach_variation |> glimpse()
 df_hourly_resp_support1 <- df_resp_support |> 
   mutate(recorded_month = month(recorded_dttm),
          recorded_year = year(recorded_dttm)) |> 
+  
+  # need to drop other category
+  filter(device_category != "other") |> 
   
   #~~ use recorded time to arrange these in order
   arrange(clif_hospitalizations_joined_id, recorded_dttm) |> 

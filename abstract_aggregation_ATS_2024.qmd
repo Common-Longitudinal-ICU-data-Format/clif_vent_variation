@@ -454,7 +454,7 @@ combined_model_coefs_sex_plot <-  combined_model_coefs_sex_clean |>
   ""
 )) |> 
   
-  filter(Variable == "sex_categorymale") |>
+  filter(Variable == "sex_categoryfemale") |>
   ggplot(aes(x = Estimate, y = system, color = Model, shape = significant)) +
   geom_point(position = position_dodge(width = 0.6), size = 4) +  # Plot the point estimates
   geom_errorbarh(aes(xmin = LowerCI, xmax = UpperCI), 
@@ -471,7 +471,7 @@ combined_model_coefs_sex_plot <-  combined_model_coefs_sex_clean |>
              aes(xintercept = vline),
              linetype = "dashed", linewidth = 0.7, color = "gray50") +
   
-  labs(x = "Estimate for Male", y = "Site", color = "Model (StudyID)") +
+  labs(x = "Estimate for Female", y = "Site", color = "Model (StudyID)") +
   theme_bw(12) +
   theme(
     axis.text.y = element_text(size = 12),
@@ -488,27 +488,27 @@ combined_model_coefs_sex_plot
 ggsave("aggregate_data/presentation_outputs/interaction_plots/sex_height_interaction_by_system.png", combined_model_coefs_sex_plot, width = 8, height = 6)
 
 
-# Getting male estimates
-male_estimates <- combined_model_coefs_sex_clean |> 
-filter(Variable == "sex_categorymale") |> 
+# Getting Female estimates
+female_estimates <- combined_model_coefs_sex_clean |> 
+filter(Variable == "sex_categoryfemale") |> 
 filter(Site != "EU") |> 
-  summarise(mean_male_estimate = mean(Estimate, na.rm = TRUE),
-    min_male_estimate = min(Estimate, na.rm = TRUE),
-    max_male_estimate = max(Estimate, na.rm = TRUE),
+  summarise(mean_female_estimate = mean(Estimate, na.rm = TRUE),
+    min_female_estimate = min(Estimate, na.rm = TRUE),
+    max_female_estimate = max(Estimate, na.rm = TRUE),
          .by = Model_Simple) 
 
 
-male_estimates
+female_estimates
 
 significant_m_vt <- combined_model_coefs_sex_clean |> 
-  filter(Variable == "sex_categorymale") |> 
+  filter(Variable == "sex_categoryfemale") |> 
   filter(Site != "EU") |> 
   filter(Model_Simple == "m_vt") |> 
   filter(significant == "Yes") |> 
   nrow() 
 
 significant_m_h_vt <- combined_model_coefs_sex_clean |> 
-  filter(Variable == "sex_categorymale") |> 
+  filter(Variable == "sex_categoryfemale") |> 
   filter(Site != "EU") |> 
   filter(Model_Simple == "m_h_vt") |> 
   filter(significant == "Yes") |> 
@@ -517,13 +517,13 @@ significant_m_h_vt <- combined_model_coefs_sex_clean |>
 
 #mediation analysis
 coef_m_vt <- combined_model_coefs_sex_clean |> 
-  filter(Variable == "sex_categorymale") |> 
+  filter(Variable == "sex_categoryfemale") |> 
   filter(Site != "EU") |> 
   filter(Model_Simple == "m_vt") |> 
   select(est_m_vt = Estimate, Site)
 
 coef_m_h_vt <- combined_model_coefs_sex_clean |> 
-  filter(Variable == "sex_categorymale") |> 
+  filter(Variable == "sex_categoryfemale") |> 
   filter(Site != "EU") |> 
   filter(Model_Simple == "m_h_vt") |>  
   select(est_m_h_vt = Estimate, Site)
@@ -1086,6 +1086,62 @@ plot_mode_hourly_resp_support
 
 
 # Abstract Prediction Methodology
+
+
+## Landmark analysis
+
+```{r}
+# Get all objects in the environment that start with "model_coefs_sex"
+model_objects <- mget(ls(pattern = "^ALL_model_coefs_landmark_mortality"))
+
+# Combine all objects into one dataset
+landmark_files_mort <- bind_rows(model_objects, .id = "source")
+
+# Filter for just htvv_cumulative rows from the combined mortality results
+mort_htvv <- landmark_files_mort %>%
+  filter(term == "htvv_cumulative") |> 
+  filter(landmark_day != 28)
+
+
+ggplot(mort_htvv, aes(x = as.numeric(landmark_day), y = estimate, color = source)) +
+  geom_line() +
+  geom_point() +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.3) +
+  scale_y_log10() +  # because ORs are multiplicative
+  labs(
+    title = "Odds Ratio of Mortality vs Cumulative HTVV by Landmark Day",
+    x = "Landmark Day",
+    y = "Odds Ratio (log scale)",
+    color = "Site"
+  ) +
+  theme_minimal()
+
+# Get all objects in the environment that start with "model_coefs_sex"
+model_objects <- mget(ls(pattern = "^ALL_model_coefs_landmark_vfds"))
+
+# Combine all objects into one dataset
+landmark_files_vfds <- bind_rows(model_objects, .id = "source")
+
+
+vfd_htvv <- landmark_files_vfds %>%
+  filter(term == "htvv_cumulative")
+
+ggplot(vfd_htvv, aes(x = as.numeric(landmark_day), y = estimate, color = source)) +
+  geom_line() +
+  geom_point() +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.3) +
+  labs(
+    title = "Effect of Cumulative HTVV on VFDs by Landmark Day",
+    x = "Landmark Day",
+    y = "Coefficient (Days)",
+    color = "Site"
+  ) +
+  theme_minimal()
+
+```
+
+
+
 
 ## Daily Mortality Models
 
