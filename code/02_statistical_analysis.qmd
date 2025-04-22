@@ -127,7 +127,7 @@ sbt <- df_hourly_resp_support |>
   ungroup() |> 
   count(health_system, hospital_day, sbt_relaxed, sbt_strict)
 
-write.csv(sbt, paste0("output/intermediate/sbt__",site_name, "_", Sys.Date(), ".csv"), row.names = FALSE)
+write.csv(sbt, paste0("output/intermediate/sbt__",site_name, "_", Sys.Date(), ".csv"), row.names = FALSE, fileEncoding = "UTF-8")
   
 
 ```
@@ -156,7 +156,7 @@ mode_hospital_summary_table <- df_hourly_resp_support |>
   arrange(-count) |> 
   ungroup()
 
-write.csv(mode_hospital_summary_table, paste0("output/final/mode_hospital_summary_table__",site_name, "_", Sys.Date(), ".csv"), row.names = FALSE)
+write.csv(mode_hospital_summary_table, paste0("output/final/mode_hospital_summary_table__",site_name, "_", Sys.Date(), ".csv"), row.names = FALSE, fileEncoding = "UTF-8")
 
 
 ##~~~~~~~~~~~~~
@@ -185,7 +185,7 @@ test_mode <- mode_hourly_resp_support_table |>
   uncount(n) 
 
 ### A FINAL TABLE
-write.csv(mode_hourly_resp_support_table, paste0("output/final/mode_hourly_resp_support_table__",site_name, "_", Sys.Date(),".csv"), row.names = FALSE)
+write.csv(mode_hourly_resp_support_table, paste0("output/final/mode_hourly_resp_support_table__",site_name, "_", Sys.Date(),".csv"), row.names = FALSE, fileEncoding = "UTF-8")
 
 ```
 
@@ -288,7 +288,7 @@ test_ltvv <- ltvv_variation_table |>
   uncount(n) 
 
 ### A FINAL TABLE
-write.csv(ltvv_variation_table, paste0("output/final/ltvv_variation_table__",site_name,"_", Sys.Date(),".csv"), row.names = FALSE)
+write.csv(ltvv_variation_table, paste0("output/final/ltvv_variation_table__",site_name,"_", Sys.Date(),".csv"), row.names = FALSE, fileEncoding = "UTF-8")
 ```
 
 
@@ -420,7 +420,7 @@ clif_demographics_table_start <- df_hourly_resp_support |>
 #   
 #   # Rename 'Overall(N=14598)' to 'fabc(N=14598)' using the site variable
 #   names(df) <- gsub("Overall\\(N=(\\d+)\\)", paste0(hosp, ' ', "(N=\\1)"), names(df))
-#   write.csv(df, paste0("output/intermediate/table1_", hosp, '.csv'), row.names = FALSE)
+#   write.csv(df, paste0("output/intermediate/table1_", hosp, '.csv'), row.names = FALSE, fileEncoding = "UTF-8")
 #   
 # }
 
@@ -452,7 +452,7 @@ characteristics <- colnames(table_summary)
 # leaving it without transposing it yet
 table_summary
 
-write.csv(table_summary, paste0("output/final/hospital_table1_summary__", site_name,"_", Sys.Date(),".csv"), row.names = FALSE)
+write.csv(table_summary, paste0("output/final/hospital_table1_summary__", site_name,"_", Sys.Date(),".csv"), row.names = FALSE, fileEncoding = "UTF-8")
 
 ```
 
@@ -493,7 +493,7 @@ test_ltvv_female_table <- ltvv_female_table |>
   uncount(n) 
 
 ### A FINAL TABLE
-write.csv(ltvv_female_table, paste0("output/final/ltvv_female_table__",site_name,"_", Sys.Date(),".csv"), row.names = FALSE)
+write.csv(ltvv_female_table, paste0("output/final/ltvv_female_table__",site_name,"_", Sys.Date(),".csv"), row.names = FALSE, fileEncoding = "UTF-8")
   
 
 
@@ -965,7 +965,7 @@ model_data <- model_data %>%
 # model_results <- broom::tidy(model, exponentiate = TRUE, conf.int = TRUE)
 # 
 # # Save the results as a CSV file
-# write.csv(model_results, paste0("output/final/logistic_regression_results_.", site_name,"_", Sys.Date(),".csv"), row.names = FALSE)
+# write.csv(model_results, paste0("output/final/logistic_regression_results_.", site_name,"_", Sys.Date(),".csv"), row.names = FALSE, fileEncoding = "UTF-8")
 # 
 # 
 # # Create a forest plot from the model results
@@ -998,7 +998,7 @@ model_data <- model_data %>%
 # summary(model_interaction)
 # 
 # # Save the interaction model results as a CSV file
-# write.csv(model_interaction_results, paste0("output/final/logistic_regression_interaction_results_.", site_name,"_", Sys.Date(),".csv"), row.names = FALSE)
+# write.csv(model_interaction_results, paste0("output/final/logistic_regression_interaction_results_.", site_name,"_", Sys.Date(),".csv"), row.names = FALSE, fileEncoding = "UTF-8")
 # 
 # # Create a forest plot for the interaction model
 # forest_plot_interaction <- ggplot(model_interaction_results, aes(x = term, y = estimate)) +
@@ -1156,7 +1156,7 @@ run_analysis_for_variable_finalfit <- function(var_name, interaction_term = FALS
            site = site_name) 
   
   suffix <- ifelse(interaction_term, "interaction", "no_interaction")
-  write.csv(tidy_fit, file = paste0("output/intermediate/model_coefs__", var_name, "_", suffix, "__", site_name, "_", Sys.Date(), ".csv"), row.names = FALSE)
+  write.csv(tidy_fit, file = paste0("output/intermediate/model_coefs__", var_name, "_", suffix, "__", site_name, "_", Sys.Date(), ".csv"), row.names = FALSE, fileEncoding = "UTF-8")
 
   
   return(fit)
@@ -1460,7 +1460,7 @@ run_daily_analysis_for_variable_finalfit <- function(var_name, agg_func, interac
   suffix <- ifelse(interaction_term, "interaction", "no_interaction")
   coefficients_filename <- paste0("output/final/model_coefs_daily__", var_name, "__", suffix, "__", site_name, "_", Sys.Date(), ".csv")
   
-  write.csv(tidy_fit, file = coefficients_filename, row.names = FALSE)
+  write.csv(tidy_fit, file = coefficients_filename, row.names = FALSE, fileEncoding = "UTF-8")
   message("just saved mortality coefs in the final folder!")
   
   
@@ -1593,7 +1593,7 @@ run_daily_analysis_for_variable_finalfit <- function(var_name, agg_func, interac
   # Save the coefficients to a CSV file
   suffix <- ifelse(interaction_term, "interaction", "no_interaction")
   coefficients_filename <- paste0("output/final/model_coefs_vfds__", var_name, "__", suffix, "__", site_name, "_", Sys.Date(), ".csv")
-  write.csv(tidy_fit, file = coefficients_filename, row.names = FALSE)
+  write.csv(tidy_fit, file = coefficients_filename, row.names = FALSE, fileEncoding = "UTF-8")
   message("just saved the coefs for vent free days!")
   
   
@@ -1731,7 +1731,7 @@ run_daily_landmark_analysis_for_variable_finalfit <- function(landmark_days = c(
     results_mort_list[[as.character(landmark_day)]] <- tidy_mort
     
     # # Save mortality results
-    # write.csv(tidy_mort, paste0("output/final/model_coefs_landmark_mortality_day_", landmark_day, "__", site_name, "_", Sys.Date(), ".csv"), row.names = FALSE)
+    # write.csv(tidy_mort, paste0("output/final/model_coefs_landmark_mortality_day_", landmark_day, "__", site_name, "_", Sys.Date(), ".csv"), row.names = FALSE, fileEncoding = "UTF-8")
 
     # VFD Model
     form_vfd <- paste("VFDs ~", paste(explanatory, collapse = " + "))
@@ -1750,8 +1750,8 @@ run_daily_landmark_analysis_for_variable_finalfit <- function(landmark_days = c(
   final_mort_df <- bind_rows(results_mort_list)
   final_vfd_df <- bind_rows(results_vfd_list)
 
-  write.csv(final_mort_df, paste0("output/final/ALL_model_coefs_landmark_mortality_", site_name, "__", Sys.Date(), ".csv"), row.names = FALSE)
-  write.csv(final_vfd_df, paste0("output/final/ALL_model_coefs_landmark_vfds_", site_name, "__", Sys.Date(), ".csv"), row.names = FALSE)
+  write.csv(final_mort_df, paste0("output/final/ALL_model_coefs_landmark_mortality_", site_name, "__", Sys.Date(), ".csv"), row.names = FALSE, fileEncoding = "UTF-8")
+  write.csv(final_vfd_df, paste0("output/final/ALL_model_coefs_landmark_vfds_", site_name, "__", Sys.Date(), ".csv"), row.names = FALSE, fileEncoding = "UTF-8")
 }
 
 # Run
@@ -2033,7 +2033,7 @@ results_sex_category_ltvv <- model_results %>%
     LowerCI, UpperCI, DegreesFreedom, Statistic, PValue
   )
 
-write.csv(results_sex_category_ltvv, paste0("output/final/model_coefs_sex_category_ltvv__", site_name, "_", Sys.Date(), ".csv"), row.names = FALSE)
+write.csv(results_sex_category_ltvv, paste0("output/final/model_coefs_sex_category_ltvv__", site_name, "_", Sys.Date(), ".csv"), row.names = FALSE, fileEncoding = "UTF-8")
 ```
 
 ## Height fixed effect
@@ -2098,7 +2098,7 @@ results_sex_category_height_ltvv <- model_results %>%
     LowerCI, UpperCI, DegreesFreedom, Statistic, PValue
   )
 
-write.csv(results_sex_category_height_ltvv, paste0("output/final/model_coefs_sex_category_height_ltvv__", site_name, "_", Sys.Date(), ".csv"), row.names = FALSE)
+write.csv(results_sex_category_height_ltvv, paste0("output/final/model_coefs_sex_category_height_ltvv__", site_name, "_", Sys.Date(), ".csv"), row.names = FALSE, fileEncoding = "UTF-8")
 ```
 
 
@@ -2166,7 +2166,7 @@ results_sex_interaction_height_ltvv <- model_results %>%
     LowerCI, UpperCI, DegreesFreedom, Statistic, PValue
   )
 
-write.csv(results_sex_interaction_height_ltvv, paste0("output/final/model_coefs_sex_interaction_height_ltvv__", site_name, "_", Sys.Date(), ".csv"), row.names = FALSE)
+write.csv(results_sex_interaction_height_ltvv, paste0("output/final/model_coefs_sex_interaction_height_ltvv__", site_name, "_", Sys.Date(), ".csv"), row.names = FALSE, fileEncoding = "UTF-8")
 ```
 
 ## Height Interaction RCS
@@ -2232,7 +2232,7 @@ results_sex_interaction_height_ltvv_rcs <- model_results %>%
     LowerCI, UpperCI, DegreesFreedom, Statistic, PValue
   )
 
-write.csv(results_sex_interaction_height_ltvv_rcs, paste0("output/final/model_coefs_sex_interaction_height_RCS_ltvv__", site_name, "_", Sys.Date(), ".csv"), row.names = FALSE)
+write.csv(results_sex_interaction_height_ltvv_rcs, paste0("output/final/model_coefs_sex_interaction_height_RCS_ltvv__", site_name, "_", Sys.Date(), ".csv"), row.names = FALSE, fileEncoding = "UTF-8")
 
 ```
 
@@ -2304,7 +2304,7 @@ results_sex_category_bin <- model_results %>%
     Statistic, PValue
   )
 
-write.csv(results_sex_category_bin, paste0("output/final/model_coefs_sex_category_bin_ltvv__", site_name, "_", Sys.Date(), ".csv"), row.names = FALSE)
+write.csv(results_sex_category_bin, paste0("output/final/model_coefs_sex_category_bin_ltvv__", site_name, "_", Sys.Date(), ".csv"), row.names = FALSE, fileEncoding = "UTF-8")
 ```
 
 ## Height fixed effect bin
@@ -2372,7 +2372,7 @@ results_sex_category_height_bin <- model_results %>%
     Statistic, PValue
   )
 
-write.csv(results_sex_category_height_bin, paste0("output/final/model_coefs_sex_category_height_bin_ltvv__", site_name, "_", Sys.Date(), ".csv"), row.names = FALSE)
+write.csv(results_sex_category_height_bin, paste0("output/final/model_coefs_sex_category_height_bin_ltvv__", site_name, "_", Sys.Date(), ".csv"), row.names = FALSE, fileEncoding = "UTF-8")
 ```
 
 ## Height Interaction bin
@@ -2439,7 +2439,7 @@ results_sex_interaction_height_bin <- model_results %>%
     Statistic, PValue
   )
 
-write.csv(results_sex_interaction_height_bin, paste0("output/final/model_coefs_sex_interaction_height_bin_ltvv__", site_name, "_", Sys.Date(), ".csv"), row.names = FALSE)
+write.csv(results_sex_interaction_height_bin, paste0("output/final/model_coefs_sex_interaction_height_bin_ltvv__", site_name, "_", Sys.Date(), ".csv"), row.names = FALSE, fileEncoding = "UTF-8")
 ```
 
 ## height Interaction RCS bin
@@ -2508,7 +2508,7 @@ results_sex_interaction_height_rcs_bin <- model_results %>%
     Statistic, PValue
   )
 
-write.csv(results_sex_interaction_height_rcs_bin, paste0("output/final/model_coefs_sex_interaction_height_rcs_bin_ltvv__", site_name, "_", Sys.Date(), ".csv"), row.names = FALSE)
+write.csv(results_sex_interaction_height_rcs_bin, paste0("output/final/model_coefs_sex_interaction_height_rcs_bin_ltvv__", site_name, "_", Sys.Date(), ".csv"), row.names = FALSE, fileEncoding = "UTF-8")
 ```
 
 
@@ -2634,7 +2634,7 @@ all_predictions <- bind_rows(
     mutate(health_system = site_name) 
 
 
-write.csv(all_predictions, paste0("output/final/model_preds_sex_category_height_ltvv__", site_name, "_", Sys.Date(), ".csv"), row.names = FALSE)
+write.csv(all_predictions, paste0("output/final/model_preds_sex_category_height_ltvv__", site_name, "_", Sys.Date(), ".csv"), row.names = FALSE, fileEncoding = "UTF-8")
 
 
 
@@ -2857,7 +2857,7 @@ run_vt_bin_analysis <- function(interaction_term = FALSE) {
 
   suffix <- ifelse(interaction_term, "interaction", "no_interaction")
   mortality_filename <- paste0("output/final/model_coefs_mortality_vt_bin__", suffix, "__", site_name, "_", Sys.Date(), ".csv")
-  write.csv(mortality_results, file = mortality_filename, row.names = FALSE)
+  write.csv(mortality_results, file = mortality_filename, row.names = FALSE, fileEncoding = "UTF-8")
   message("Saved mortality VT bin coefficients!")
 
   # ---- VFD Model ----
@@ -2870,7 +2870,7 @@ run_vt_bin_analysis <- function(interaction_term = FALSE) {
     mutate(variable = "vfd_vt_bin", site = site_name)
 
   vfd_filename <- paste0("output/final/model_coefs_vfd_vt_bin__", suffix, "__", site_name, "_", Sys.Date(), ".csv")
-  write.csv(vfd_results, file = vfd_filename, row.names = FALSE)
+  write.csv(vfd_results, file = vfd_filename, row.names = FALSE, fileEncoding = "UTF-8")
   message("Saved VFD VT bin coefficients!")
 
   # ---- Sensitivity Analyses ----
@@ -2884,7 +2884,7 @@ run_vt_bin_analysis <- function(interaction_term = FALSE) {
     mutate(variable = "mortality_vt_bin_exclude_early", site = site_name)
 
   mortality_filename_early <- paste0("output/final/model_coefs_mortality_vt_bin_exclude_early__", suffix, "__", site_name, "_", Sys.Date(), ".csv")
-  write.csv(mortality_results_early, file = mortality_filename_early, row.names = FALSE)
+  write.csv(mortality_results_early, file = mortality_filename_early, row.names = FALSE, fileEncoding = "UTF-8")
 
   ## 2. **Survivors-Only Analysis**
   vt_bin_data_survivors <- vt_bin_data_patient %>%
@@ -2896,7 +2896,7 @@ run_vt_bin_analysis <- function(interaction_term = FALSE) {
     mutate(variable = "vfd_survivors_vt_bin", site = site_name)
 
   vfd_survivor_filename <- paste0("output/final/model_coefs_vfd_survivors_vt_bin__", suffix, "__", site_name, "_", Sys.Date(), ".csv")
-  write.csv(vfd_survivor_results, file = vfd_survivor_filename, row.names = FALSE)
+  write.csv(vfd_survivor_results, file = vfd_survivor_filename, row.names = FALSE, fileEncoding = "UTF-8")
   message("Saved VFD VT bin coefficients for survivors!")
 
   ## 3. **Exclude patients with short ventilation duration (<24 hours)**
@@ -2909,7 +2909,7 @@ run_vt_bin_analysis <- function(interaction_term = FALSE) {
     mutate(variable = "mortality_vt_bin_24hr", site = site_name)
 
   mortality_filename_24hr <- paste0("output/final/model_coefs_mortality_vt_bin_24hr__", suffix, "__", site_name, "_", Sys.Date(), ".csv")
-  write.csv(mortality_results_24hr, file = mortality_filename_24hr, row.names = FALSE)
+  write.csv(mortality_results_24hr, file = mortality_filename_24hr, row.names = FALSE, fileEncoding = "UTF-8")
 
   message("All sensitivity analyses saved!")
 

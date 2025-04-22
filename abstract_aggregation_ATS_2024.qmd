@@ -84,6 +84,9 @@ hospital_files <- file_groups[["hospital_table1_summary"]]
 # Read and combine `hospital_table1_summary` files
 hospital_data <- lapply(hospital_files, read.csv) |> bind_rows()
 
+hospital_data <- lapply(hospital_files, function(file) {
+  read.csv(file, fileEncoding = "UTF-8", stringsAsFactors = FALSE)
+}) |> bind_rows()
 
 # Prepare hospital table summary with `system_hospital`
 hospital_table1_summary <- hospital_data |> 
@@ -133,7 +136,7 @@ replace_hospital_id <- function(df) {
 # Step 4: Read, combine, and replace hospital_id in files for each group
 data_list <- lapply(file_groups, function(file_paths) {
   data_frames <- lapply(file_paths, function(file_path) {
-    df <- read.csv(file_path)
+    df <- read.csv(file_path, fileEncoding = "UTF-8", stringsAsFactors = FALSE)
     # Apply the replace function to each dataframe
     df <- replace_hospital_id(df)
     return(df)
@@ -1107,11 +1110,12 @@ ggplot(mort_htvv, aes(x = as.numeric(landmark_day), y = estimate, color = source
   geom_line() +
   geom_point() +
   geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.3) +
-  scale_y_log10() +  # because ORs are multiplicative
+  facet_wrap(~ site, scales = "free_y") +
+  # scale_y_log10() +  # because ORs are multiplicative
   labs(
     title = "Odds Ratio of Mortality vs Cumulative HTVV by Landmark Day",
     x = "Landmark Day",
-    y = "Odds Ratio (log scale)",
+    y = "Odds Ratio",
     color = "Site"
   ) +
   theme_minimal()
@@ -1130,6 +1134,7 @@ ggplot(vfd_htvv, aes(x = as.numeric(landmark_day), y = estimate, color = source)
   geom_line() +
   geom_point() +
   geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.3) +
+  facet_wrap(~ site, scales = "free_y") +
   labs(
     title = "Effect of Cumulative HTVV on VFDs by Landmark Day",
     x = "Landmark Day",
@@ -1192,7 +1197,7 @@ ggplot(aes(x = term, y = estimate, ymin = conf.low, ymax = conf.high, color = va
   labs(
     title = "Comparison of Variables Across Sites on In-hospital Mortality",
     x = "Predictor Variable",
-    y = "Odds Ratio (log scale)",
+    y = "Odds Ratio",
     color = "Variable"
   ) +
   theme_bw(base_size = 12) +
