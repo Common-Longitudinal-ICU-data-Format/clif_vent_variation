@@ -9,4 +9,5 @@ output/intermediate/clean_db
 output/final/
 abstract_aggregation_ATS_2024.html
 abstract_aggregation_ATS_2024.qmd
+sandbox.qmd
 aggregate_data

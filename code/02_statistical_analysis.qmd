@@ -1654,17 +1654,19 @@ run_daily_landmark_analysis_for_variable_finalfit <- function(landmark_days = c(
                 mortality_enc_full = ffirst(mortality_enc),
                 max_day_enc = ceiling(fmax(hour_sequence_from_first_vent_to_discharge / 24))) |> 
       ungroup() |> 
-      mutate(death_day = fifelse(mortality_enc_full == 1, max_day_enc, 99999))    # Summarize variables up to and on the landmark day
+      mutate(death_day = fifelse(mortality_enc_full == 1, max_day_enc, 99999))    
     
     max_days_vent <- intubation_data %>%
       filter(vent_01 == 1) |>
+      filter(vent_episode_id == 1) |> 
       group_by(clif_hospitalizations_joined_id) %>%
       dplyr::summarize(max_day_vent = max(day, na.rm = TRUE)) |> 
       ungroup() 
 
     landmark_data <- intubation_data %>%
       # filter(!is.na(tidal_volume_set)) |> 
-      filter(day <= landmark_day) %>%
+      filter(day <= landmark_day) |> 
+      filter(vent_episode_id == 1) |> 
       left_join(max_days, by = "clif_hospitalizations_joined_id") |> 
       left_join(max_days_vent, by = "clif_hospitalizations_joined_id") |> 
       mutate(
@@ -1673,18 +1675,28 @@ run_daily_landmark_analysis_for_variable_finalfit <- function(landmark_days = c(
       )
     
     model_data <- landmark_data |> 
+      group_by(clif_hospitalizations_joined_id) |> 
+      mutate(
+        enc_mean_sf_ratio = if (all(is.na(sf_ratio))) NA_real_ else fmean(sf_ratio, na.rm = TRUE), # some days only have a few hours (the day they die... need NAs)
+        enc_mean_laps2 = fmean(laps2, na.rm = TRUE),
+      ) |> 
+      ungroup() |> 
       group_by(clif_hospitalizations_joined_id, day) |> 
       mutate(
         VFDs = case_when(
           death_day > landmark_day & death_day <= (landmark_day + 28) ~ 0,
           max_day_vent >= (landmark_day + 28) ~ 0,
-          max_day_vent < (landmark_day + 28) ~ 28 - max_day_vent,
+          max_day_vent < (landmark_day + 28) ~ 28 - (max_day_vent - landmark_day),
           TRUE ~ NA
         )
       ) |>  
       # drop trach data... they will be in the data will they are trach'd
       filter(is.na(tracheostomy)) |>
+      # drop those where VFDs is negative because that means they are extubated
+      filter(VFDs >= 0) |> 
       dplyr::summarize(
+        enc_mean_sf_ratio = ffirst(enc_mean_sf_ratio, na.rm = TRUE),
+        enc_mean_laps2 = ffirst(enc_mean_laps2, na.rm = TRUE),
         daily_sf_ratio = if (all(is.na(sf_ratio))) NA_real_ else fmin(sf_ratio, na.rm = TRUE), # some days only have a few hours (the day they die... need NAs)
         daily_laps2 = fmax(laps2, na.rm = TRUE),
         htvv_cumulative = if (all(is.na(htvv_daily_percent))) 0 else fmean(htvv_daily_percent, na.rm = TRUE),
@@ -1698,19 +1710,21 @@ run_daily_landmark_analysis_for_variable_finalfit <- function(landmark_days = c(
       distinct() |> 
       ungroup() |> 
       filter(day == landmark_day) 
-
+    
     # Format data# Formatmin_grid.C5_rules() data
     model_data <- as.data.frame(model_data)
- model_data$sex_category <- factor(model_data$sex_category, levels = c("Male", "Female"))
- model_data$hospital_id <- as.factor(model_data$hospital_id)
+    model_data$sex_category <- factor(model_data$sex_category, levels = c("Male", "Female"))
+    model_data$hospital_id <- as.factor(model_data$hospital_id)
     model_data$mortality_enc <- as.factor(model_data$mortality_enc)
     
     message(paste0("number of rows in this model        = ", model_data |> nrow()))
-    message(paste0("number of encounters in this model  = ", model_data |> select(clif_hospitalizations_joined_id) |> nrow()))
-
-    explanatory <- c("daily_sf_ratio", "daily_laps2", "age_at_admission", "sex_category", "htvv_cumulative")
+    message(paste0("number of encounters in this model  = ", model_data |>
+                     select(clif_hospitalizations_joined_id) |> nrow()))
+    
+    explanatory <- c("enc_mean_sf_ratio", "enc_mean_laps2", "daily_sf_ratio", "daily_laps2",
+                     "age_at_admission", "sex_category", "htvv_cumulative")
     if (hosp_id_count > 1) explanatory <- c(explanatory, "hospital_id")
-
+    
     if (nlevels(factor(model_data$mortality_enc)) < 2) {
       message("Skipping mortality model for day ", landmark_day, " (not enough variation in outcome)")
       next

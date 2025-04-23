@@ -386,14 +386,14 @@ model_objects <- mget(ls(pattern = "^model_coefs_sex"))
 combined_model_coefs_sex <- bind_rows(model_objects, .id = "source")
 
 model_names <- c(
-  "Male ~ HTVV (Binary)"                = "M_HTVV",
-  "Male ~ Vt"                           = "M_Vt",
-  "Male + Height ~ HTVV (Binary)"       = "M_H_HTVV",
-  "Male + Height ~ Vt"                  = "M_H_Vt",
-  "Male * Height ~ HTVV (Binary)"       = "M_Hx_HTVV",
-  "Male * Height ~ Vt"                  = "M_Hx_Vt",
-  "Male * rcs(Height) ~ HTVV (Binary)"  = "M_rcsHx_HTVV",
-  "Male * rcs(Height) ~ Vt"             = "M_rcsHx_Vt"
+  "Female ~ HTVV (Binary)"                = "F_HTVV",
+  "Female ~ Vt"                           = "F_Vt",
+  "Female + Height ~ HTVV (Binary)"       = "F_H_HTVV",
+  "Female + Height ~ Vt"                  = "F_H_Vt",
+  "Female * Height ~ HTVV (Binary)"       = "F_Hx_HTVV",
+  "Female * Height ~ Vt"                  = "F_Hx_Vt",
+  "Female * rcs(Height) ~ HTVV (Binary)"  = "F_rcsHx_HTVV",
+  "Female * rcs(Height) ~ Vt"             = "F_rcsHx_Vt"
 )
 
 # View the combined dataset
@@ -405,33 +405,33 @@ combined_model_coefs_sex_clean <- combined_model_coefs_sex |>
          UpperCI = ifelse(str_detect(StudyID, "bin"), exp(UpperCI), UpperCI)) |> 
   mutate(
     Model_Simple = factor(Model, levels = c(
-      "Male ~ HTVV (Binary)",
-      "Male + Height ~ HTVV (Binary)",
-      "Male * Height ~ HTVV (Binary)",
-      "Male * rcs(Height) ~ HTVV (Binary)",
-      "Male ~ Vt",
-      "Male + Height ~ Vt",
-      "Male * Height ~ Vt",
-      "Male * rcs(Height) ~ Vt"
+      "Female ~ HTVV (Binary)",
+      "Female + Height ~ HTVV (Binary)",
+      "Female * Height ~ HTVV (Binary)",
+      "Female * rcs(Height) ~ HTVV (Binary)",
+      "Female ~ Vt",
+      "Female + Height ~ Vt",
+      "Female * Height ~ Vt",
+      "Female * rcs(Height) ~ Vt"
     ),
                           labels = c(
-                            "m_htvv", 
-                            "m_h_htvv", 
-                            "m_hx_htvv", 
-                            "m_rcs_hx_htvv", 
-                            "m_vt", 
-                            "m_h_vt",
-                            "m_hx_vt", 
-                            "m_rcs_hx_vt"
+                            "f_htvv", 
+                            "f_h_htvv", 
+                            "f_hx_htvv", 
+                            "f_rcs_hx_htvv", 
+                            "f_vt", 
+                            "f_h_vt",
+                            "f_hx_vt", 
+                            "f_rcs_hx_vt"
                           ), ordered = TRUE))
 
 model_order <- c(
-  "Male ~ HTVV (Binary)",
-  "Male + Height ~ HTVV (Binary)",
-  "Male * Height ~ HTVV (Binary)",
-  "Male ~ Vt",
-  "Male + Height ~ Vt",
-  "Male * Height ~ Vt"
+  "Female ~ HTVV (Binary)",
+  "Female + Height ~ HTVV (Binary)",
+  "Female * Height ~ HTVV (Binary)",
+  "Female ~ Vt",
+  "Female + Height ~ Vt",
+  "Female * Height ~ Vt"
 )
 #Assuming your combined dataset `combined_model_coefs_sex` has columns:
 # "StudyID" for different models, "Site" for different sites, "Estimate", "LowerCI", and "UpperCI".
@@ -448,16 +448,16 @@ combined_model_coefs_sex_plot <-  combined_model_coefs_sex_clean |>
   filter(!str_detect(Model, "rcs"))  |> 
   filter(abs(LowerCI) < threshold & abs(UpperCI) < threshold) |> 
   filter(Model %in% c(
-  "Male ~ HTVV (Binary)",
-  "Male + Height ~ HTVV (Binary)",
-  # "Male * Height ~ HTVV (Binary)",
-  "Male ~ Vt",
-  "Male + Height ~ Vt",
-  # "Male * Height ~ Vt",
+  "Female ~ HTVV (Binary)",
+  "Female + Height ~ HTVV (Binary)",
+  # "Female * Height ~ HTVV (Binary)",
+  "Female ~ Vt",
+  "Female + Height ~ Vt",
+  # "Female * Height ~ Vt",
   ""
 )) |> 
   
-  filter(Variable == "sex_categoryfemale") |>
+  filter(Variable == "sex_categoryfemale") |> 
   ggplot(aes(x = Estimate, y = system, color = Model, shape = significant)) +
   geom_point(position = position_dodge(width = 0.6), size = 4) +  # Plot the point estimates
   geom_errorbarh(aes(xmin = LowerCI, xmax = UpperCI), 
@@ -503,37 +503,37 @@ filter(Site != "EU") |>
 
 female_estimates
 
-significant_m_vt <- combined_model_coefs_sex_clean |> 
+significant_f_vt <- combined_model_coefs_sex_clean |> 
   filter(Variable == "sex_categoryfemale") |> 
   filter(Site != "EU") |> 
-  filter(Model_Simple == "m_vt") |> 
+  filter(Model_Simple == "f_vt") |> 
   filter(significant == "Yes") |> 
   nrow() 
 
-significant_m_h_vt <- combined_model_coefs_sex_clean |> 
+significant_f_h_vt <- combined_model_coefs_sex_clean |> 
   filter(Variable == "sex_categoryfemale") |> 
   filter(Site != "EU") |> 
-  filter(Model_Simple == "m_h_vt") |> 
+  filter(Model_Simple == "f_h_vt") |> 
   filter(significant == "Yes") |> 
   nrow() 
 
 
 #mediation analysis
-coef_m_vt <- combined_model_coefs_sex_clean |> 
+coef_f_vt <- combined_model_coefs_sex_clean |> 
   filter(Variable == "sex_categoryfemale") |> 
   filter(Site != "EU") |> 
-  filter(Model_Simple == "m_vt") |> 
-  select(est_m_vt = Estimate, Site)
+  filter(Model_Simple == "f_vt") |> 
+  select(est_f_vt = Estimate, Site)
 
-coef_m_h_vt <- combined_model_coefs_sex_clean |> 
+coef_f_h_vt <- combined_model_coefs_sex_clean |> 
   filter(Variable == "sex_categoryfemale") |> 
   filter(Site != "EU") |> 
-  filter(Model_Simple == "m_h_vt") |>  
-  select(est_m_h_vt = Estimate, Site)
+  filter(Model_Simple == "f_h_vt") |>  
+  select(est_f_h_vt = Estimate, Site)
 
-mediation_vt <- coef_m_h_vt |> left_join(coef_m_vt) |> 
-  mutate(difference = est_m_vt - est_m_h_vt) |> 
-  mutate(mediation = difference / est_m_vt)
+mediation_vt <- coef_f_h_vt |> left_join(coef_f_vt) |> 
+  mutate(difference = est_f_vt - est_f_h_vt) |> 
+  mutate(mediation = difference / est_f_vt)
 
 mediation_vt_min <- min(mediation_vt$mediation)
 mediation_vt_max <- mediation_vt |> filter(mediation <1) |> pull() |> max()
@@ -558,20 +558,20 @@ model_preds_sex_category_height_ltvv <-  model_preds_sex_category_height_ltvv |>
   filter(height_inches > 54) |>   
   mutate(
     Model_Simple = factor(Model, levels = c(
-      "Male ~ HTVV (Binary)",
-      "Male ~ Vt",
-      "Male + Height ~ HTVV (Binary)",
-      "Male + Height ~ Vt",
-      "Male * Height ~ HTVV (Binary)",
-      "Male * Height ~ Vt",
-      "Male * rcs(Height) ~ HTVV (Binary)",
-      "Male * rcs(Height) ~ Vt"
+      "Female ~ HTVV (Binary)",
+      "Female ~ Vt",
+      "Female + Height ~ HTVV (Binary)",
+      "Female + Height ~ Vt",
+      "Female * Height ~ HTVV (Binary)",
+      "Female * Height ~ Vt",
+      "Female * rcs(Height) ~ HTVV (Binary)",
+      "Female * rcs(Height) ~ Vt"
     ),
                           labels = c(
-                            "m_htvv", "m_vt", 
-                            "m_h_htvv", "m_h_vt",
-                            "m_hx_htvv", "m_hx_vt", 
-                            "m_rcs_hx_htvv", "m_rcs_hx_vt"
+                            "f_htvv", "f_vt", 
+                            "f_h_htvv", "f_h_vt",
+                            "f_hx_htvv", "f_hx_vt", 
+                            "f_rcs_hx_htvv", "f_rcs_hx_vt"
                           )))
 
 
@@ -585,9 +585,9 @@ all_predictions_continuous <- model_preds_sex_category_height_ltvv |>
 
 # For continuous models
 continuous_model_order <- c(
-  "Male ~ Vt",
-  "Male + Height ~ Vt",
-  "Male * Height ~ Vt"
+  "Female ~ Vt",
+  "Female + Height ~ Vt",
+  "Female * Height ~ Vt"
 )
 
 
@@ -636,9 +636,9 @@ all_predictions_binary <- model_preds_sex_category_height_ltvv |>
 
 # For binary models
 binary_model_order <- c(
-  "Male ~ HTVV (Binary)",
-  "Male + Height ~ HTVV (Binary)",
-  "Male * Height ~ HTVV (Binary)"
+  "Female ~ HTVV (Binary)",
+  "Female + Height ~ HTVV (Binary)",
+  "Female * Height ~ HTVV (Binary)"
 )
 
 # Plot all models together
@@ -684,7 +684,7 @@ sex_cat_hours_hospital <- ltvv_female |>
 
 
 weighted_means <- model_preds_sex_category_height_ltvv |> 
-  filter(Model_Simple == "m_vt") |> 
+  filter(Model_Simple == "f_vt") |> 
   select(predicted, health_system, sex_category) |> distinct() |> 
   left_join(sex_cat_hours_hospital) |> 
     group_by(sex_category) %>%
@@ -744,7 +744,7 @@ The Common Longitudinal Intensive Care Unit (CLIF) consortium is comprised of **
 Of the **`r total_patients`** critically ill adults, the mean age was **`r round(mean_age, 1)`** years (standard deviation **`r round(sd_age, 1)`** years), and there were **`r format(total_females, scientific = FALSE)`** (**`r round(percent_females, 1)`%**) females, **`r format(total_black, scientific = FALSE)`** (**`r round(percent_black, 1)`%**) Black patients, and **`r total_hispanic`** (**`r round(percent_hispanic, 1)`%**) Hispanic patients across **`r total_health_systems`** healthcare systems and
 **`r total_hospitals`** hospitals. **Figure 1** shows the distribution of LTVV statified by patient sex. The mean rate of LTVV in females across all patients was **`r round(100 - rate_htvv_female, 1)`% (`r round(100 - conf_interval_female[2], 1)`** - **`r round(100 - conf_interval_female[1], 1)`)** while the rate for males was **`r round(100 - rate_htvv_male, 1)`% (`r round(100 - conf_interval_male[2], 1)`** - **`r round(100 - conf_interval_male[1], 1)`)**. 
 Using the baseline models, females were predicted to have a tidal volume **`r abs_difference`** cc/kg IBW higher than males (**`r weighted_means_f`**  vs. **`r weighted_means_m`** )
-Estimates were significant for male (vs. female) in **`r significant_m_vt`** hospitals and ranged from **`r round(male_estimates |> filter(Model_Simple == "m_vt") |> select(min_male_estimate), 1)`** to **`r round(male_estimates |> filter(Model_Simple == "m_vt") |> select(max_male_estimate), 1)`**, but when corrected for height the estimates were significant in **`r significant_m_h_vt`** hospitals and ranged from **`r round(male_estimates |> filter(Model_Simple == "m_h_vt") |> select(min_male_estimate), 1)`** to **`r round(male_estimates |> filter(Model_Simple == "m_h_vt") |> select(max_male_estimate), 1)`**.
+Estimates were significant for female (vs. male) in **`r significant_f_vt`** hospitals and ranged from **`r round(male_estimates |> filter(Model_Simple == "f_vt") |> select(min_male_estimate), 1)`** to **`r round(male_estimates |> filter(Model_Simple == "f_vt") |> select(max_male_estimate), 1)`**, but when corrected for height the estimates were significant in **`r significant_f_h_vt`** hospitals and ranged from **`r round(male_estimates |> filter(Model_Simple == "f_h_vt") |> select(min_male_estimate), 1)`** to **`r round(male_estimates |> filter(Model_Simple == "f_h_vt") |> select(max_male_estimate), 1)`**.
 
 
 mediation analsyis resulted in **`r round(mediation_vt_min, 1)*100`%** to **`r round(mediation_vt_max*100, 1)`**
@@ -821,6 +821,19 @@ mode_hosp_order2 <- mode_hourly_resp_support_table |>
   filter(mode_category == "assist control-volume control") |> 
   mutate(percent = n/total_mode_hours) |> 
   distinct() |> 
+  arrange(percent) |> 
+  select(hospital_id_graph) |>  pull()
+
+mode_hosp_order3 <- mode_hourly_resp_support_table |> 
+  mutate(total_mode_hours = sum(n, na.rm = TRUE),
+         .by = hospital_id_graph) |> 
+  filter(mode_category %in% c("assist control-volume control","pressure-regulated volume control")) |> 
+  distinct() |>
+  mutate(n = sum(n, na.rm = TRUE),
+         .by = hospital_id_graph) |> 
+  mutate(percent = n/total_mode_hours) |> 
+  select(-mode_category) |> 
+  distinct() |>
   arrange(percent) |> 
   select(hospital_id_graph) |>  pull()
 
@@ -912,6 +925,7 @@ plot_mode_hourly_resp_support <-
 )
 
 plot_mode_hourly_resp_support
+
 ggsave("aggregate_data/plot_mode_hourly_resp_support.jpeg", plot = plot_mode_hourly_resp_support, 
        device = "jpeg", width = 10, height = 9, units = "in", dpi = 600)
 
@@ -1110,7 +1124,7 @@ ggplot(mort_htvv, aes(x = as.numeric(landmark_day), y = estimate, color = source
   geom_line() +
   geom_point() +
   geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.3) +
-  facet_wrap(~ site, scales = "free_y") +
+  facet_wrap(~ site, scales = "fixed") +
   # scale_y_log10() +  # because ORs are multiplicative
   labs(
     title = "Odds Ratio of Mortality vs Cumulative HTVV by Landmark Day",
@@ -1118,7 +1132,9 @@ ggplot(mort_htvv, aes(x = as.numeric(landmark_day), y = estimate, color = source
     y = "Odds Ratio",
     color = "Site"
   ) +
-  theme_minimal()
+    geom_hline(yintercept = 1, linetype = "dashed", color = "gray40") +
+  theme_minimal() 
+
 
 # Get all objects in the environment that start with "model_coefs_sex"
 model_objects <- mget(ls(pattern = "^ALL_model_coefs_landmark_vfds"))
@@ -1134,14 +1150,16 @@ ggplot(vfd_htvv, aes(x = as.numeric(landmark_day), y = estimate, color = source)
   geom_line() +
   geom_point() +
   geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.3) +
-  facet_wrap(~ site, scales = "free_y") +
+  facet_wrap(~ site, scales = "fixed") +
   labs(
     title = "Effect of Cumulative HTVV on VFDs by Landmark Day",
     x = "Landmark Day",
     y = "Coefficient (Days)",
     color = "Site"
   ) +
-  theme_minimal()
+    geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
+  theme_minimal() 
+
 
 ```
 
