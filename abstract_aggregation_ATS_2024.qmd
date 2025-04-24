@@ -101,8 +101,11 @@ hospital_table1_summary <- hospital_data |>
   group_by(health_system) |> 
   mutate(Health_system_ID = sprintf("%02d", cur_group_id())) |>  # Zero-pad Health_system_ID
   ungroup() |> 
-  mutate(system_hospital = paste("System", Health_system_ID, "Hosp", Hospital_ID),
+  mutate(system_hospital = paste("System", Health_system_ID, " Hosp", Hospital_ID),
          system = paste("System", Health_system_ID))
+
+
+
 
 system_hospital <- hospital_table1_summary |> 
   select(hospital_id = Hospital, system_hospital, system, site = health_system) |> 
@@ -192,7 +195,59 @@ icu_hosp_ranks_8cc <- ltvv_variation |>
 ```{r}
 #|output: true
 
-hospital_table1_summary |> kable() 
+hospital_table1_summary_clean <- hospital_table1_summary  |> 
+    mutate(system_hospital = paste("System", Health_system_ID, "\n Hosp", Hospital_ID),
+         system = paste("System", Health_system_ID)) |> 
+    # Rename and reorder columns
+  select(
+    # `Hospital` = Hospital,
+    `Sample Size` = N,
+    `Age (mean ± SD)` = Age,
+    `Female (%)` = Sex..Female,
+    `Black (%)` = Black,
+    `White (%)` = White,
+    `Asian (%)` = Asian,
+    `Other Race (%)` = Other,
+    `Hispanic (%)` = Ethnicity..Hispanic,
+    `Ventilator Days (median [IQR])` = Ventilator.Days,
+    `Mortality (%)` = Mortality,
+    `System-Hospital` = system_hospital
+  ) |> 
+  gt(rowname_col = "System-Hospital") |> 
+  fmt_markdown(columns = "System-Hospital") |> 
+  # Bold row labels
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_stub()
+  ) |> 
+  # Bold only the variable name in column labels (before parentheses)
+  cols_label(
+    `Sample Size` = md("**Sample Size**"),
+    `Age (mean ± SD)` = md("**Age** (mean ± SD)"),
+    `Female (%)` = md("**Female** (%)"),
+    `Black (%)` = md("**Black** (%)"),
+    `White (%)` = md("**White** (%)"),
+    `Asian (%)` = md("**Asian** (%)"),
+    `Other Race (%)` = md("**Other Race** (%)"),
+    `Hispanic (%)` = md("**Hispanic** (%)"),
+    `Ventilator Days (median [IQR])` = md("**Ventilator Days** (median [IQR])"),
+    `Mortality (%)` = md("**Mortality** (%)")
+  ) |> 
+  tab_header(
+    title = md("**Hospital-Level Summary Table**")
+  ) |> 
+  opt_table_font(font = google_font("Roboto")) |> 
+  tab_options(
+    table.font.size = px(13),
+    heading.title.font.size = px(16),
+    data_row.padding = px(5)
+  )
+
+hospital_table1_summary_clean
+
+hospital_table1_summary_clean |> 
+ writexl::write_xlsx("aggregate_data/presentation_outputs/descriptive_tables/hospital_summary_table.xlsx")
+
 ```
 
 
