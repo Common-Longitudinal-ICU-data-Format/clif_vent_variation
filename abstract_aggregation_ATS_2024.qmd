@@ -64,7 +64,8 @@ extract_base_name <- function(file_path) {
   # Split by double underscore
   parts <- strsplit(file_name_no_ext, "__")[[1]]
   if (length(parts) < 2) {
-    stop(paste("Filename does not contain double underscore '__':", file_name))
+    warning(paste("Filename does not contain double underscore '__':", file_name))
+    return(NA_character_)
   }
   # The base name is the part before the double underscore
   base_name <- parts[1]
@@ -245,7 +246,7 @@ hospital_table1_summary_clean <- hospital_table1_summary  |>
 
 hospital_table1_summary_clean
 
-hospital_table1_summary_clean |> 
+hospital_table1_summary |> 
  writexl::write_xlsx("aggregate_data/presentation_outputs/descriptive_tables/hospital_summary_table.xlsx")
 
 ```
