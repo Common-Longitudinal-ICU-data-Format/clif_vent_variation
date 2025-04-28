@@ -861,9 +861,9 @@ df_resp_support_1 <- df_resp_support_1 |>
   # random carried over bipap sometimes when there is trach next and there is vent before
   filter(
     !(device_category == "nippv" & lead(device_category == "trach collar") & lag(device_category != "nippv"))
-  ) |> 
-
+  ) |>
   
+
   # filter if missing everything  
   filter(
     #  essentially this is... DROP if everything missing
@@ -880,8 +880,18 @@ df_resp_support_1 <- df_resp_support_1 |>
   # dropping duplicates for everything else but just taking the first one
   #       ffirst works WAY faster than fill up and down and slicing(1)
   ffirst() |> 
+
   ungroup() |> # technically don't need this  
-    
+
+    # random nasal cannula surrounded by IMV before and after
+  group_by(clif_hospitalizations_joined_id) |>
+  arrange(clif_hospitalizations_joined_id, recorded_dttm) |>
+  filter(
+    !(device_category == "nasal cannula" & lead(device_category == "imv") & lag(device_category == "imv"))
+  ) |>
+
+
+  
   ###########
   # TEMP STOP #
   ungroup()
@@ -1035,9 +1045,13 @@ df_resp_support <- df_resp_support_1 |>
   ), .direction = "downup"
   ) |>
   
+  # making trach the same for everyone
+  mutate(tracheostomy = fifelse(tracheostomy == 1, 1, NA)) |> 
+  
   # fill trach... only down
   fill(c(tracheostomy), .direction = "down") |>
   ungroup() |> 
+  
   
   # need to get rid of duplicates 
   distinct() |> 
@@ -1207,6 +1221,7 @@ df_ibw <- clif_vitals |>
   dplyr::select(clif_hospitalizations_joined_id, ibw, sex_category) |> 
   ungroup() |> 
   distinct()
+  
 
 
 ```
@@ -1346,31 +1361,47 @@ df_hourly_resp_support1 <- df_resp_support |>
     vent_episode_id = fcumsum(
       device_category == "imv" & 
         flag(device_category_f, fill = TRUE) != device_category_f &
-        is.na(tracheostomy) & 
+        (is.na(tracheostomy) | tracheostomy == 0) & 
         gap_vent_hours <= 6    # this deals with the difference between the lead and the current vent_hours
       )) |> 
   ungroup() 
 
+
+
+### Currently df_hourly_resp_support 1 ... the gap_vent_hours are only preventing changing ID if there is a huge gap in documentaion between IMV rows with nothing in between.  Currently having a few hours of nasal cannula between vent would change to a new Vent ID WHEN the vent comes BACK
+
+
 df_hourly_resp_support2 <- df_hourly_resp_support1 |> 
+
   
   # currently those with trach right away are zeros for vent_id
   # those without vent or were subsequent after vent are currently the same number as the vent before
+  
+  mutate(vent_episode_id = as.double(vent_episode_id)) |>
   mutate(
     # change those not with trach/vent to NA
-    vent_episode_id = fifelse(
-      device_category == "imv" | tracheostomy == 1,
-      vent_episode_id,
-      NA_real_
-    ),
-    
-    # we could also drop these patients if we wanted to 
-    # change those trach'd on day1 without vent beforehand to enc_sequence 1
-    vent_episode_id = fifelse(
-      tracheostomy == 1 & vent_episode_id == 0,
-      1,
-      vent_episode_id
-    )
-  ) |> 
+    vent_episode_id = fcase(
+      device_category == "imv" | tracheostomy == 1, vent_episode_id,
+      default = NA
+    )) |>
+  # find out who came in vented or trached on day one so we can increase enc_id by one
+  group_by(clif_hospitalizations_joined_id) |>
+  # did they come in with trach or vent and have episode ID = 0
+  mutate(vent_episode_id_check = fcase(
+    (tracheostomy == 1 |
+       device_category == "imv") & vent_episode_id == 0, 1,
+    default = 0
+  )) |>
+  mutate(vent_episode_id_check = fmax(vent_episode_id_check, na.rm = T)) |>
+  ungroup() |>
+  
+  ## sequence up if they meet criteria above (this way we can always keep vent_episode_id == 1)
+  mutate(
+    vent_episode_id = fcase(
+      vent_episode_id_check == 1 &
+        !is.na(vent_episode_id),                vent_episode_id + 1,
+      rep_len(TRUE, length(vent_episode_id)),   vent_episode_id
+    )) |>
   
   # getting vent hour per sequence
   group_by(clif_hospitalizations_joined_id, vent_episode_id) |> 

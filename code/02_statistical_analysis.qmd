@@ -3021,50 +3021,52 @@ ggplot(all_predictions_binary, aes(x = height_inches, y = predicted, color = sex
 
 # Categorizing VT (Tidal Volume) per kg IBW into Bins
 ```{r}
+
+# ---- Incorporate Lab Data ----
+vt_bin_data <- first_intubation_data %>%
+  # only hospitals that have enough traffic
+  filter(hospital_id %in% hospital_filter) |> 
+  filter(vent_episode_id == 1) %>%
+  mutate(vt_cckg = tidal_volume_set / ibw) %>%
+  mutate(vt_bin = case_when(
+    vt_cckg <  5  ~ "<5 cc/kg",
+    vt_cckg <  6  ~ "5-6 cc/kg",
+    vt_cckg <  7  ~ "6-7 cc/kg",
+    vt_cckg <  8  ~ "7-8 cc/kg",
+    vt_cckg <  9  ~ "8-9 cc/kg",
+    vt_cckg < 10  ~ "9-10 cc/kg",
+    vt_cckg < 11  ~ "10-11 cc/kg",
+    vt_cckg >= 11  ~ ">=11 cc/kg",
+    TRUE          ~ NA_character_
+  )) %>%
+  filter(!is.na(vt_bin)) %>%
+  # mutate(vt_bin = relevel(factor(vt_bin), ref = "6-7 cc/kg")) |>
+  left_join(clif_labs |> filter(lab_category %in% c("ph_arterial", "pco2_arterial")) |> 
+              mutate(
+                recorded_date = date(lab_result_dttm),  # Extract date from recorded timestamp
+                recorded_hour = hour(lab_result_dttm)  # Extract hour from timestamp
+              ) |> 
+              mutate(
+                ph = fifelse(lab_category == "ph_arterial", lab_value_numeric, NA_real_),  # Assuming lab_name stores 'pH'
+                pco2 = fifelse(lab_category == "pco2_arterial", lab_value_numeric, NA_real_)  # Assuming lab_name stores 'pCO2_arterial'
+              ) |> 
+              dplyr::select(
+                clif_hospitalizations_joined_id,
+                recorded_date,
+                recorded_hour,
+                ph,
+                pco2
+              ), 
+            by = c("clif_hospitalizations_joined_id", "recorded_date", "recorded_hour")) |> 
+  filter(hospital_id %in% hospital_filter) 
+
 run_vt_bin_analysis <- function(interaction_term = FALSE) {
   
   message("Running VT Bin Analysis for Mortality and VFDs...")
-
-  # ---- Incorporate Lab Data ----
-  vt_bin_data <- first_intubation_data %>%
-      # only hospitals that have enough traffic
-  filter(hospital_id %in% hospital_filter) |> 
-    filter(vent_episode_id == 1) %>%
-    mutate(vt_cckg = tidal_volume_set / ibw) %>%
-    mutate(vt_bin = case_when(
-      vt_cckg <  5  ~ "<5 cc/kg",
-      vt_cckg <  6  ~ "5-6 cc/kg",
-      vt_cckg <  7  ~ "6-7 cc/kg",
-      vt_cckg <  8  ~ "7-8 cc/kg",
-      vt_cckg <  9  ~ "8-9 cc/kg",
-      vt_cckg < 10  ~ "9-10 cc/kg",
-      vt_cckg < 11  ~ "10-11 cc/kg",
-      vt_cckg >= 11  ~ ">=11 cc/kg",
-      TRUE          ~ NA_character_
-    )) %>%
-    filter(!is.na(vt_bin)) %>%
-    # mutate(vt_bin = relevel(factor(vt_bin), ref = "6-7 cc/kg")) |>
-    left_join(clif_labs |> filter(lab_category %in% c("ph_arterial", "pco2_arterial")) |> 
-                  mutate(
-    recorded_date = date(lab_result_dttm),  # Extract date from recorded timestamp
-    recorded_hour = hour(lab_result_dttm)  # Extract hour from timestamp
-  ) |> 
-    mutate(
-      ph = fifelse(lab_category == "ph_arterial", lab_value_numeric, NA_real_),  # Assuming lab_name stores 'pH'
-      pco2 = fifelse(lab_category == "pco2_arterial", lab_value_numeric, NA_real_)  # Assuming lab_name stores 'pCO2_arterial'
-    ) |> 
-    dplyr::select(
-      clif_hospitalizations_joined_id,
-      recorded_date,
-      recorded_hour,
-      ph,
-      pco2
-    ), 
-  by = c("clif_hospitalizations_joined_id", "recorded_date", "recorded_hour")) |> 
-    filter(hospital_id %in% hospital_filter) 
-
+  
+  
   # ---- Aggregate to Patient Level ----
-   # Get worst values in the first 24 hours
+  # Get worst values in the first 24 hours
   vt_bin_data_patient <- vt_bin_data |> 
     filter(vent_episode_hour_seq < 24) %>%
     group_by(clif_hospitalizations_joined_id) %>%
