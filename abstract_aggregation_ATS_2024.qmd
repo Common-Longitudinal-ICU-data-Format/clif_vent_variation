@@ -1177,7 +1177,7 @@ mort_htvv <- landmark_files_mort %>%
   filter(landmark_day != 28)
 
 
-ggplot(mort_htvv, aes(x = as.numeric(landmark_day), y = estimate, color = source)) +
+ggplot(mort_htvv, aes(x = as.numeric(landmark_day), y = estimate, color = site)) +
   geom_line() +
   geom_point() +
   geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.3) +
@@ -1199,13 +1199,14 @@ model_objects <- mget(ls(pattern = "^ALL_model_coefs_landmark_vfds"))
 # Combine all objects into one dataset
 landmark_files_vfds <- bind_rows(model_objects, .id = "source")
 
-
+# Compute VFH marginal effects for each SF category
 vfd_htvv <- landmark_files_vfds %>%
     mutate(landmark_day = landmark_hour/24) |> 
+  filter(term == "htvv_cumulative") |> 
+  rename(estimate_main = estimate, std_error_main = std.error)
 
-  filter(term == "htvv_cumulative")
-
-ggplot(vfd_htvv, aes(x = as.numeric(landmark_day), y = estimate, color = source)) +
+# This is just htvv_cumulative for severe
+ggplot(vfd_htvv, aes(x = as.numeric(landmark_day), y = estimate_main, color = site)) +
   geom_line() +
   geom_point() +
   geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.3) +
@@ -1218,6 +1219,121 @@ ggplot(vfd_htvv, aes(x = as.numeric(landmark_day), y = estimate, color = source)
   ) +
     geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
   theme_minimal() 
+
+
+# Getting marginal effects for everything
+vfd_marginal <- landmark_files_vfds %>%
+  filter(str_detect(term, "htvv_cumulative:sf_category")) %>%
+  mutate(sf_category = str_remove(term, "htvv_cumulative:")) %>%
+  select(landmark_hour, sf_category, estimate_interaction = estimate, std_error_interaction = std.error, site) %>%
+  left_join(vfd_htvv, by = c("landmark_hour", "site")) %>%
+  mutate(
+    marginal_estimate = estimate_main + estimate_interaction,
+    se_combined = sqrt(std_error_main^2 + std_error_interaction^2),
+    conf.low = marginal_estimate - 1.96 * se_combined,
+    conf.high = marginal_estimate + 1.96 * se_combined,
+    model = "VFHs (Coefficient)",
+    estimate_type = "Linear"
+  ) %>%
+  select(landmark_hour, sf_category, marginal_estimate, conf.low, conf.high, model, estimate_type, site)
+
+# Also include the Severe group directly (uses htvv_cumulative only)
+vfd_severe <- vfd_htvv %>%
+  mutate(
+    sf_category = "Severe",
+    marginal_estimate = estimate_main,
+    se_combined = std_error_main,
+    conf.low = marginal_estimate - 1.96 * se_combined,
+    conf.high = marginal_estimate + 1.96 * se_combined,
+    model = "VFHs (Coefficient)",
+    estimate_type = "Linear"
+  ) %>%
+  select(landmark_hour, sf_category, marginal_estimate, conf.low, conf.high, model, estimate_type, site)
+
+
+# Combine all VFH marginal effects
+vfd_effect <- bind_rows(vfd_marginal, vfd_severe) |> 
+  mutate(sf_category = factor(sf_category,
+  levels = c("Severe", "sf_categoryModerate", "sf_categoryMild_Normal"),
+  labels = c("Severe", "Moderate", "Mild or Normal"),
+  ordered = TRUE
+)) |> 
+  filter(sf_category %in% c(
+    "Severe",
+    "Moderate",
+    "Mild or Normal"
+  )) |> 
+    filter(landmark_hour != 672)  |> 
+  filter(landmark_hour != 24)
+
+
+combined_effect <- bind_rows(mort_effect, vfd_effect) |> 
+  filter(landmark_hour != 672)  |> 
+  filter(landmark_hour != 24)
+
+# Plot
+ggplot(vfd_effect, aes(x = landmark_hour / 24, y = marginal_estimate, color = site)) +
+  geom_line() +
+  geom_point() +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.3) +
+  facet_wrap(~ sf_category, scales = "free_y") +
+  # geom_hline(data = tibble(model = c("Mortality (OR)", "VFHs (Coefficient)"),
+  #                          yintercept = c(1, 0)),
+  #            aes(yintercept = yintercept),
+  #            linetype = "dashed", color = "gray40") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray40")+ 
+  labs(
+    title = "Effect of HTVV on Mortality and VFHs Across Landmark Days by SF Ratio",
+    x = "Landmark Day",
+    y = "Effect Estimate",
+    color = "SF Ratio Category"
+  ) +
+  theme_minimal()
+
+
+
+#EEFFECTS
+# Get all objects in the environment that start with "model_coefs_sex"
+model_objects <- mget(ls(pattern = "^ALL_model_coefs_landmark_effects_vfds"))
+
+# Combine all objects into one dataset
+landmark_files_effects_vfds <- bind_rows(model_objects, .id = "source")
+
+
+
+# Make sure the landmark hour is expressed in days for readability
+effects_vfd_df_plot <- landmark_files_effects_vfds %>%
+  mutate(landmark_day = as.numeric(landmark_hour) / 24) |> 
+  filter(landmark_hour != 672) |> 
+  group_by(landmark_day, x, group) %>%
+  summarise(
+    predicted = mean(predicted),
+    conf.low = mean(conf.low),
+    conf.high = mean(conf.high),
+    .groups = "drop"
+  )
+# Plot
+ggplot(effects_vfd_df_plot, aes(x = x, y = predicted, color = group)) +
+  geom_line(size = 1.2) +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high, fill = group), alpha = 0.15, color = NA) +
+  facet_wrap(~ landmark_day, scales = "free") +
+  labs(
+    title = "Marginal Effect of HTVV on VFHs by SF Ratio Category and Landmark Day",
+    subtitle = "Adjusted for age and LAPS2",
+    x = "Cumulative HTVV Hours",
+    y = "Predicted Ventilator-Free Hours",
+    color = "SF Ratio Category",
+    fill = "SF Ratio Category"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "top",
+    strip.text = element_text(face = "bold", size = 11),
+    axis.text = element_text(size = 9),
+    axis.title = element_text(size = 11),
+    plot.title = element_text(face = "bold", size = 14)
+  )
+
 
 
 ```
