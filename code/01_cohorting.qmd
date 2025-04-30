@@ -201,6 +201,7 @@ clif_patient_start <-  read_data("clif_patient") |>
   dplyr::select(patient_id, sex_category) |> 
   filter(str_detect(str_to_lower(sex_category), "male|female")) |> 
   dplyr::select(patient_id) |> 
+  mutate(across(where(is_character),str_to_lower)) |> 
   distinct()
 
 
