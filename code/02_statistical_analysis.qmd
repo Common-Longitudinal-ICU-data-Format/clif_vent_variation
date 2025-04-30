@@ -1738,7 +1738,7 @@ landmark_day = landmark_hour/24
       ungroup() |> 
       group_by(clif_hospitalizations_joined_id, day) |> 
       
-      # drop trach data... they will be in the data will they are trach'd
+      # drop trach data... they will be in the data until they are trach'd
       filter(is.na(tracheostomy)) |>
       # drop those where VFHs is negative because that means they are extubated
       filter(VFHs >= 0) |> 

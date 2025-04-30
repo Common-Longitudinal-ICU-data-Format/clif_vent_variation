@@ -807,6 +807,7 @@ df_resp_support_1 <- df_resp_support_1 |>
     device_category = 
       fcase(
         is.na(device_category) & 
+          (lag(device_category == "imv") | lead(device_category == "imv")) & 
           !str_detect(device_name, "trach") &
           tidal_volume_set > 0 & 
           resp_rate_set > 0,
@@ -815,6 +816,7 @@ df_resp_support_1 <- df_resp_support_1 |>
     device_name = 
       fcase(
         is.na(device_name) & 
+          (lag(device_category == "imv") | lead(device_category == "imv")) & 
           !str_detect(device_name, "trach") &
           tidal_volume_set > 0 & 
           resp_rate_set > 0,
@@ -823,6 +825,7 @@ df_resp_support_1 <- df_resp_support_1 |>
     mode_category = 
       fcase(
         is.na(mode_category) & 
+          (lag(device_category == "imv") | lead(device_category == "imv")) & 
           !str_detect(device_name, "trach") &
           tidal_volume_set > 0 & 
           resp_rate_set > 0,
@@ -831,6 +834,7 @@ df_resp_support_1 <- df_resp_support_1 |>
     mode_name = 
       fcase(
         is.na(mode_name) & 
+          (lag(device_category == "imv") | lead(device_category == "imv")) & 
           !str_detect(device_name, "trach") &
           tidal_volume_set > 0 & 
           resp_rate_set > 0,
