@@ -1216,7 +1216,7 @@ df_ibw <- clif_vitals |>
   
   # Remove records with height less than 40
   # This also removes those without a height for the whole admission, which is ok... can't do LTVV without height known
-  filter(height_in >= 40) |>  # assumming these are kiddos and/or amputees which means IBW will be inaccurate
+  filter(height_in >= 40 & height_in <= 100) |>  # assumming these are kiddos and/or amputees which means IBW will be inaccurate
   group_by(clif_hospitalizations_joined_id) |> 
   
   # using first ibw for the encounter

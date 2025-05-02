@@ -213,7 +213,9 @@ hospital_table1_summary_clean <- hospital_table1_summary  |>
     `Ventilator Days (median [IQR])` = Ventilator.Days,
     `Mortality (%)` = Mortality,
     `System-Hospital` = system_hospital
-  ) |> 
+  ) |>
+  arrange(`System-Hospital`) |>   # <--- THIS LINE SORTS BY FIRST COLUMN
+  
   gt(rowname_col = "System-Hospital") |> 
   fmt_markdown(columns = "System-Hospital") |> 
   # Bold row labels
@@ -1174,7 +1176,7 @@ landmark_files_mort <- bind_rows(model_objects, .id = "source")
 mort_htvv <- landmark_files_mort %>%
   filter(term == "htvv_cumulative") |> 
   mutate(landmark_day = landmark_hour/24) |> 
-  filter(landmark_day != 28)
+  filter(landmark_day != 28) 
 
 
 ggplot(mort_htvv, aes(x = as.numeric(landmark_day), y = estimate, color = site)) +
@@ -1263,20 +1265,21 @@ vfd_effect <- bind_rows(vfd_marginal, vfd_severe) |>
     "Moderate",
     "Mild or Normal"
   )) |> 
-    filter(landmark_hour != 672)  |> 
+    filter(landmark_hour != 672) |> 
   filter(landmark_hour != 24)
+
 
 
 combined_effect <- bind_rows(mort_effect, vfd_effect) |> 
   filter(landmark_hour != 672)  |> 
-  filter(landmark_hour != 24)
+  filter(landmark_hour != 24) 
 
 # Plot
-ggplot(vfd_effect, aes(x = landmark_hour / 24, y = marginal_estimate, color = site)) +
+ggplot(vfd_effect, aes(x = landmark_hour / 24, y = marginal_estimate, color = sf_category)) +
   geom_line() +
   geom_point() +
   geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.3) +
-  facet_wrap(~ sf_category, scales = "free_y") +
+  facet_wrap(~ site, scales = "free_y") +
   # geom_hline(data = tibble(model = c("Mortality (OR)", "VFHs (Coefficient)"),
   #                          yintercept = c(1, 0)),
   #            aes(yintercept = yintercept),
@@ -1288,7 +1291,9 @@ ggplot(vfd_effect, aes(x = landmark_hour / 24, y = marginal_estimate, color = si
     y = "Effect Estimate",
     color = "SF Ratio Category"
   ) +
-  theme_minimal()
+  theme_minimal() +
+  scale_colour_brewer(palette = "Set1", direction = 1) 
+
 
 
 
