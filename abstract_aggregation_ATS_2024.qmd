@@ -663,7 +663,7 @@ all_predictions_continuous_plot <- all_predictions_continuous |>
   # facet_wrap(~ Model) +
     facet_grid(health_system ~ Model, scales = "free_y") +
   labs(
-    title = "Predicted VT per kg PBW by Height and Sex Category",
+    title = "Predicted Tidal Volume/PBW by Height and Sex Category",
     x = "Height (inches)",
     y = "Predicted VT per kg PBW",
     color = "Sex Category",
@@ -711,9 +711,9 @@ all_predictions_binary_plot <- all_predictions_binary |>
   geom_ribbon(aes(ymin = conf.low, ymax = conf.high, fill = sex_category), alpha = 0.2, color = NA) +
   facet_grid(health_system ~ Model,  scales = "free_y") +
   labs(
-    title = "Predicted VT per kg IBW by Height and Sex Category",
+    title = "Predicted Rate of HTVV by Height and Sex Category",
     x = "Height (inches)",
-    y = "Predicted VT per kg IBW",
+    y = "Rate of HTVV (>8cc/kg PBW)",
     color = "Sex Category",
     fill = "Sex Category"
   ) +
@@ -802,7 +802,7 @@ The Common Longitudinal Intensive Care Unit (CLIF) consortium is comprised of **
 Of the **`r total_patients`** critically ill adults, the mean age was **`r round(mean_age, 1)`** years (standard deviation **`r round(sd_age, 1)`** years), and there were **`r format(total_females, scientific = FALSE)`** (**`r round(percent_females, 1)`%**) females, **`r format(total_black, scientific = FALSE)`** (**`r round(percent_black, 1)`%**) Black patients, and **`r total_hispanic`** (**`r round(percent_hispanic, 1)`%**) Hispanic patients across **`r total_health_systems`** healthcare systems and
 **`r total_hospitals`** hospitals. **Figure 1** shows the distribution of LTVV statified by patient sex. The mean rate of LTVV in females across all patients was **`r round(100 - rate_htvv_female, 1)`% (`r round(100 - conf_interval_female[2], 1)`** - **`r round(100 - conf_interval_female[1], 1)`)** while the rate for males was **`r round(100 - rate_htvv_male, 1)`% (`r round(100 - conf_interval_male[2], 1)`** - **`r round(100 - conf_interval_male[1], 1)`)**. 
 Using the baseline models, females were predicted to have a tidal volume **`r abs_difference`** cc/kg IBW higher than males (**`r weighted_means_f`**  vs. **`r weighted_means_m`** )
-Estimates were significant for female (vs. male) in **`r significant_f_vt`** hospitals and ranged from **`r round(male_estimates |> filter(Model_Simple == "f_vt") |> select(min_male_estimate), 1)`** to **`r round(male_estimates |> filter(Model_Simple == "f_vt") |> select(max_male_estimate), 1)`**, but when corrected for height the estimates were significant in **`r significant_f_h_vt`** hospitals and ranged from **`r round(male_estimates |> filter(Model_Simple == "f_h_vt") |> select(min_male_estimate), 1)`** to **`r round(male_estimates |> filter(Model_Simple == "f_h_vt") |> select(max_male_estimate), 1)`**.
+Estimates were significant for female (vs. male) in **`r significant_f_vt`** hospitals and ranged from **`r round(female_estimates |> filter(Model_Simple == "f_vt") |> select(min_female_estimate), 1)`** to **`r round(female_estimates |> filter(Model_Simple == "f_vt") |> select(max_female_estimate), 1)`**, but when corrected for height the estimates were significant in **`r significant_f_h_vt`** hospitals and ranged from **`r round(female_estimates |> filter(Model_Simple == "f_h_vt") |> select(min_female_estimate), 1)`** to **`r round(female_estimates |> filter(Model_Simple == "f_h_vt") |> select(max_female_estimate), 1)`**.
 
 
 mediation analsyis resulted in **`r round(mediation_vt_min, 1)*100`%** to **`r round(mediation_vt_max*100, 1)`**
@@ -1270,7 +1270,7 @@ vfd_effect <- bind_rows(vfd_marginal, vfd_severe) |>
 
 
 
-combined_effect <- bind_rows(mort_effect, vfd_effect) |> 
+combined_effect <- bind_rows(mort_htvv, vfd_effect) |> 
   filter(landmark_hour != 672)  |> 
   filter(landmark_hour != 24) 
 

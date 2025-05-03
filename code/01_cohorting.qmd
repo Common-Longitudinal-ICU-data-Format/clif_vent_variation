@@ -306,17 +306,17 @@ import_df <- function(x) {
       # helps with glitch in open_dataset
       mutate(across(where(is.character), as.character)) |>
       
+      # unfactor things to ensure everything is lowercase
+      mutate(across(where(is.factor), as.character)) |> 
+      
+      # get everything to lower  (Moved above R.JOIN 5/2025 in case ppl have capitals in _id Variables)
+      mutate(across(where(is_character), str_to_lower)) |> 
+      
       # # helps with glitch in open_dataset
       # mutate(across(where(is.double), as.integer)) |> 
       
       # right join early so files are smaller
       right_join(df_cohort_keep) |> 
-      
-      # unfactor things to ensure everything is lowercase
-      mutate(across(where(is.factor), as.character)) |> 
-      
-      # get everything to lower
-      mutate(across(where(is_character), str_to_lower)) |> 
       
       # only need if using open dataset
       collect()
@@ -328,14 +328,14 @@ import_df <- function(x) {
     df <- read_function(file_path) |>
       mutate(across(ends_with("_id"), as.character)) |> 
       
-      # right join early so files are smaller
-      right_join(df_cohort_keep) |> 
-      
       # unfactor things to ensure everything is lowercase
       mutate(across(where(is.factor), as.character)) |> 
       
-      # get everything to lower
-      mutate(across(where(is_character), str_to_lower)) 
+      # get everything to lower (Moved above R.JOIN 5/2025 in case ppl have capitals in _id Variables)
+      mutate(across(where(is_character), str_to_lower)) |> 
+      
+      # right join early so files are smaller
+      right_join(df_cohort_keep) 
     
   }
   
