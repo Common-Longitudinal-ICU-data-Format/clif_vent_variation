@@ -2171,6 +2171,7 @@ then finally
 3.  tv_kg ~ sex_category + height_inches + sex_category*height_inches + age_at_admission + laps2 + pf_ratio + ph + pco2
 4. tv_kg ~ sex_category + rcs(height_inches) + sex_category*rcs(height_inches) + age_at_admission + laps2 + pf_ratio + ph + pco2
 
+Able to keep random intercept in for continuous outcomes
 
 # Sex_category vs Height analysis 
 
@@ -3363,6 +3364,17 @@ ggsurvplot(km_oi_fit, data = OI_analysis_test,
 }
 ```
 
+```{r}
+# saving hospitals
+output_dir_hosp = "output/intermediate/clean_db"
+df_name_hosp <- "hospital_order"
+date_file_hosp <- file.path(output_dir_hosp, "most_recent_save_resp.Rdata")
+load(date_file_hosp)  # This will load 'most_recent_save_resp' variable
+input_file_hosp <- file.path(output_dir_hosp, paste0(df_name_hosp, "_.", most_recent_save_resp, ".parquet"))
+df_hosp <- arrow::read_parquet(input_file_hosp)
+df_hosp |> View()
+write.csv(df_hosp, paste0("output/final/hospital_order_table__",site_name,"_", Sys.Date(),".csv"), row.names = FALSE, fileEncoding = "UTF-8")
+```
 
 
 ```{r}

@@ -230,7 +230,7 @@ select <- dplyr::select
 setDTthreads(0)
 
 # Plan for parallel execution
-plan(multisession)
+try(plan(multisession), silent = TRUE)
 
 
 
@@ -555,6 +555,17 @@ You have completed setup!!! Woohooo!!! \n Now proceeding on to 01_cohorting scri
 
 
 # source_qmd(here("code", "02_statistical_analysis.qmd"), echo = TRUE)
+
+
+
+output_dir_hosp = "output/intermediate/clean_db"
+df_name_hosp <- "hospital_order"
+date_file_hosp <- file.path(output_dir_hosp, "most_recent_save_resp.Rdata")
+load(date_file_hosp)  # This will load 'most_recent_save_resp' variable
+input_file_hosp <- file.path(output_dir_hosp, paste0(df_name_hosp, "_.", most_recent_save_resp, ".parquet"))
+df_hosp <- arrow::read_parquet(input_file_hosp)
+df_hosp |> View()
+write.csv(df_hosp, paste0("output/final/hospital_order_table__",site_name,"_", Sys.Date(),".csv"), row.names = FALSE, fileEncoding = "UTF-8")
 
 
 
