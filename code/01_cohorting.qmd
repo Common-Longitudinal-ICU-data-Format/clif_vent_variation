@@ -238,6 +238,7 @@ df_cohort_keep <- clif_hospitalization |>
   
 # dropping hospitals with < 100 encounters
 hospital_keep <- read_data("clif_adt") %>%
+  mutate(hospital_id = "amsterdam_umc") |>
   mutate(across(where(is.character), str_to_lower)) |> 
 
   right_join(df_cohort_keep) |> 
@@ -462,7 +463,8 @@ clif_respiratory_support <- import_df("clif_respiratory_support") |>
 
 
 # ADT File to merge with patient so we can get hospital ID
-clif_adt <- import_df("clif_adt") |> 
+clif_adt <- import_df("clif_adt") |>
+      mutate(hospital_id = "amsterdam_umc") |>
       # Check if Variables match!!
       dplyr::select(
         clif_hospitalizations_joined_id, hospitalization_id,

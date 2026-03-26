@@ -678,8 +678,7 @@ ltvv_variation |>
     x = "Hospital",
     y = "Set Tidal Volume (cc/kg)"
   ) +
-      theme_ipsum(axis_title_just = "m",
-                  axis_title_size =  15)  +
+      theme_minimal()  +
 
   # theme_minimal() + # This theme provides a clean and modern look to the plot
   scale_fill_manual(values = c("Male" = "blue", "Female" = "green")) + # Manual colors for gender  
@@ -3104,9 +3103,11 @@ run_vt_bin_analysis <- function(interaction_term = FALSE) {
     
     # Ensure no missing lab values (replace with median if needed)
     mutate(across(c(worst_pf_ratio, worst_sf_ratio, worst_laps2, worst_ph, worst_pco2),
-                  ~ replace_na(., median(., na.rm = TRUE)))) %>%    
+                  ~ replace_inf(., NA_real_))) %>%
     mutate(across(c(worst_pf_ratio, worst_sf_ratio, worst_laps2, worst_ph, worst_pco2),
-                  ~ replace_inf(., median(., na.rm = TRUE)))) %>%
+                  ~ replace_na(., median(., na.rm = TRUE)))) %>%
+    filter(if_all(c(worst_pf_ratio, worst_sf_ratio, worst_laps2, worst_ph, worst_pco2, vt_cckg, age_at_admission),
+                  ~ is.finite(.))) %>%
     
     # Calculate Ventilator-Free Days (VFDs)
     mutate(VFDs = case_when(
@@ -3372,7 +3373,7 @@ date_file_hosp <- file.path(output_dir_hosp, "most_recent_save_resp.Rdata")
 load(date_file_hosp)  # This will load 'most_recent_save_resp' variable
 input_file_hosp <- file.path(output_dir_hosp, paste0(df_name_hosp, "_.", most_recent_save_resp, ".parquet"))
 df_hosp <- arrow::read_parquet(input_file_hosp)
-df_hosp |> View()
+# df_hosp |> View()
 write.csv(df_hosp, paste0("output/final/hospital_order_table__",site_name,"_", Sys.Date(),".csv"), row.names = FALSE, fileEncoding = "UTF-8")
 ```
 

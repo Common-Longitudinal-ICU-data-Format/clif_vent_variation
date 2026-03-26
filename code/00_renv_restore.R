@@ -187,7 +187,16 @@ print(needs_source)
 
 library(lmerTest)
 library(tzdb)
-library(tidyverse)
+# library(tidyverse)  # ragg not available; load components individually
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(readr)
+library(purrr)
+library(tibble)
+library(stringr)
+library(forcats)
+library(lubridate)
 library(systemfonts)
 library(readxl)
 library(DBI)
@@ -203,7 +212,8 @@ library(fst)
 library(dtplyr)
 library(bit64)
 library(arrow)
-library(hrbrthemes)
+# library(hrbrthemes)  # fonts not available; use theme_minimal instead
+theme_set(theme_minimal())
 library(here)
 library(table1)
 library(rvest)
@@ -519,7 +529,7 @@ write_parquet_tz <- function(df, file_path) {
 
 
 ## Date range
-start_date <- "2018-01-01"
+start_date <- "2000-01-01"
 end_date <- "2024-09-30"
 
 
@@ -558,14 +568,14 @@ You have completed setup!!! Woohooo!!! \n Now proceeding on to 01_cohorting scri
 
 
 
-output_dir_hosp = "output/intermediate/clean_db"
-df_name_hosp <- "hospital_order"
-date_file_hosp <- file.path(output_dir_hosp, "most_recent_save_resp.Rdata")
-load(date_file_hosp)  # This will load 'most_recent_save_resp' variable
-input_file_hosp <- file.path(output_dir_hosp, paste0(df_name_hosp, "_.", most_recent_save_resp, ".parquet"))
-df_hosp <- arrow::read_parquet(input_file_hosp)
-df_hosp |> View()
-write.csv(df_hosp, paste0("output/final/hospital_order_table__",site_name,"_", Sys.Date(),".csv"), row.names = FALSE, fileEncoding = "UTF-8")
+# output_dir_hosp = "output/intermediate/clean_db"
+# df_name_hosp <- "hospital_order"
+# date_file_hosp <- file.path(output_dir_hosp, "most_recent_save_resp.Rdata")
+# load(date_file_hosp)  # This will load 'most_recent_save_resp' variable
+# input_file_hosp <- file.path(output_dir_hosp, paste0(df_name_hosp, "_.", most_recent_save_resp, ".parquet"))
+# df_hosp <- arrow::read_parquet(input_file_hosp)
+# df_hosp |> View()
+# write.csv(df_hosp, paste0("output/final/hospital_order_table__",site_name,"_", Sys.Date(),".csv"), row.names = FALSE, fileEncoding = "UTF-8")
 
 
 

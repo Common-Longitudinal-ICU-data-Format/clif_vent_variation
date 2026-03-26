@@ -86,7 +86,9 @@ hospital_files <- file_groups[["hospital_table1_summary"]]
 hospital_data <- lapply(hospital_files, read.csv) |> bind_rows()
 
 hospital_data <- lapply(hospital_files, function(file) {
-  read.csv(file, fileEncoding = "UTF-8", stringsAsFactors = FALSE)
+  read.csv(file, fileEncoding = "UTF-8", stringsAsFactors = FALSE) |>
+    mutate(across(where(is.logical), as.character)) |>
+    mutate(across(where(is.integer), as.double))
 }) |> bind_rows()
 
 # Prepare hospital table summary with `system_hospital`
@@ -103,7 +105,20 @@ hospital_table1_summary <- hospital_data |>
   mutate(Health_system_ID = sprintf("%02d", cur_group_id())) |>  # Zero-pad Health_system_ID
   ungroup() |> 
   mutate(system_hospital = paste("System", Health_system_ID, " Hosp", Hospital_ID),
-         system = paste("System", Health_system_ID))
+         system = paste("System", Health_system_ID)) |>
+  # Preserve MIMIC and Amsterdam names; censor all others
+  mutate(
+    system_hospital = case_when(
+      str_to_lower(health_system) == "mimic" ~ paste("MIMIC Hosp", Hospital_ID),
+      str_to_lower(health_system) == "amsterdamumcdb" ~ paste("Amsterdam Hosp", Hospital_ID),
+      TRUE ~ system_hospital
+    ),
+    system = case_when(
+      str_to_lower(health_system) == "mimic" ~ "MIMIC",
+      str_to_lower(health_system) == "amsterdamumcdb" ~ "Amsterdam",
+      TRUE ~ system
+    )
+  )
 
 
 
@@ -141,6 +156,10 @@ replace_hospital_id <- function(df) {
 data_list <- lapply(file_groups, function(file_paths) {
   data_frames <- lapply(file_paths, function(file_path) {
     df <- read.csv(file_path, fileEncoding = "UTF-8", stringsAsFactors = FALSE)
+    # Coerce logical (all-NA) columns to character; ensure numeric cols stay numeric
+    df <- df |>
+      mutate(across(where(is.logical), as.character)) |>
+      mutate(across(where(is.integer), as.double))
     # Apply the replace function to each dataframe
     df <- replace_hospital_id(df)
     return(df)
@@ -148,6 +167,25 @@ data_list <- lapply(file_groups, function(file_paths) {
   combined_data <- bind_rows(data_frames)
   return(combined_data)
 })
+
+# Build site-to-system censoring lookup (preserve MIMIC and Amsterdam)
+site_censor_map <- system_hospital |>
+  select(site, system) |>
+  distinct()
+
+# Censor health_system and site columns in all data frames
+censor_site_names <- function(df) {
+  # Build a named lookup vector: raw_site -> censored_system
+  lookup <- setNames(site_censor_map$system, site_censor_map$site)
+  for (col in intersect(names(df), c("health_system", "site", "Site"))) {
+    raw_vals <- str_to_lower(df[[col]])
+    censored <- lookup[raw_vals]
+    df[[col]] <- ifelse(!is.na(censored), censored, raw_vals)
+  }
+  return(df)
+}
+
+data_list <- lapply(data_list, censor_site_names)
 
 # Step 5: Load each combined data into the global environment
 list2env(data_list, envir = .GlobalEnv)
@@ -499,12 +537,9 @@ threshold <- 10  # adjust as appropriate for your context
 
 
 combined_model_coefs_sex_plot <-  combined_model_coefs_sex_clean |>
-  filter(Site != "EU") |> 
-  mutate(Site = str_to_lower(Site)) |> 
-  left_join(system_hospital |> select(system, site) |> distinct(),
-            by = join_by(Site == site)) |> 
-  filter(!str_detect(Model, "rcs"))  |> 
-  filter(abs(LowerCI) < threshold & abs(UpperCI) < threshold) |> 
+  filter(Site != "EU", Site != "eu") |>
+  filter(!str_detect(Model, "rcs"))  |>
+  filter(abs(LowerCI) < threshold & abs(UpperCI) < threshold) |>
   filter(Model %in% c(
   "Female ~ HTVV (Binary)",
   "Female + Height ~ HTVV (Binary)",
@@ -513,10 +548,10 @@ combined_model_coefs_sex_plot <-  combined_model_coefs_sex_clean |>
   "Female + Height ~ Vt",
   # "Female * Height ~ Vt",
   ""
-)) |> 
-  
-  filter(Variable == "sex_categoryfemale") |> 
-  ggplot(aes(x = Estimate, y = system, color = Model, shape = significant)) +
+)) |>
+
+  filter(Variable == "sex_categoryfemale") |>
+  ggplot(aes(x = Estimate, y = Site, color = Model, shape = significant)) +
   geom_point(position = position_dodge(width = 0.6), size = 4) +  # Plot the point estimates
   geom_errorbarh(aes(xmin = LowerCI, xmax = UpperCI), 
                  position = position_dodge(width = 0.6), height = 0.25, size = 0.8) +  # Error bars with smaller height and thicker line
@@ -638,8 +673,9 @@ max_height <- round(max(model_preds_sex_category_height_ltvv$height_inches, na.r
 
 
 # Ensure Model is a factor
-all_predictions_continuous <- model_preds_sex_category_height_ltvv |> 
-  filter(!str_detect(Model, "Binary"))
+all_predictions_continuous <- model_preds_sex_category_height_ltvv |>
+  filter(!str_detect(Model, "Binary")) |>
+  filter(!is.na(Model))
 
 # For continuous models
 continuous_model_order <- c(
@@ -683,11 +719,12 @@ all_predictions_continuous_plot <- all_predictions_continuous |>
 
 all_predictions_continuous_plot
 ggsave("aggregate_data/presentation_outputs/interaction_plots/continuous_sex_height_interaction.png",
-       all_predictions_continuous_plot, width = 12, height = 9)
+       all_predictions_continuous_plot, width = 14, height = 12)
 
 # Ensure Model is a factor
-all_predictions_binary <- model_preds_sex_category_height_ltvv |> 
-  filter(str_detect(Model, "Binary"))
+all_predictions_binary <- model_preds_sex_category_height_ltvv |>
+  filter(str_detect(Model, "Binary")) |>
+  filter(!is.na(Model))
 
 
 
@@ -731,7 +768,7 @@ all_predictions_binary_plot <- all_predictions_binary |>
 
 all_predictions_binary_plot
 ggsave("aggregate_data/presentation_outputs/interaction_plots/binary_sex_height_interaction.png",
-       all_predictions_binary_plot, width = 12, height = 9)
+       all_predictions_binary_plot, width = 14, height = 12)
 
 
 
@@ -1479,12 +1516,17 @@ htvv_models <- combined_model_coefs_daily_mort |>
   mutate(group = fifelse(str_detect(source, "vfd"), "Vent Free Days (Coef)", "Mortality (OR)"),
          Estimate_transformed = ifelse(!str_detect(source, "vfd"), exp(estimate), estimate),
          LowerCI_transformed = ifelse(!str_detect(source, "vfd"), exp(conf.low), conf.low),
-         UpperCI_transformed = ifelse(!str_detect(source, "vfd"), exp(conf.high), conf.high))
+         UpperCI_transformed = ifelse(!str_detect(source, "vfd"), exp(conf.high), conf.high)) |>
+  # Cap extreme CIs for readable plots
+  mutate(UpperCI_transformed = pmin(UpperCI_transformed, 20),
+         LowerCI_transformed = pmax(LowerCI_transformed, -20))
 
-htvv_models_plot <- htvv_models |> 
-    group_by(group) |> 
-  mutate(site = fct_reorder(site, Estimate_transformed)) |> 
-  ungroup() |> 
+htvv_models <- censor_site_names(htvv_models)
+
+htvv_models_plot <- htvv_models |>
+    group_by(group) |>
+  mutate(site = fct_reorder(site, Estimate_transformed)) |>
+  ungroup() |>
   filter(site != "EU") |> 
     mutate(
     term = recode(term,
@@ -1552,10 +1594,13 @@ mortality_by_bin <- combined_model_coefs_mort_bins |>
   mutate(
     vt_bin = str_remove(term, "vt_bin"),
     vt_bin = factor(vt_bin, levels = vt_bin_levels),
-    OR = estimate,  # <-- transform here
-    CI_low = conf.low,
-    CI_high = conf.high
-  ) |> 
+    OR = exp(estimate),  # exponentiate logistic regression coefficients to ORs
+    CI_low = exp(conf.low),
+    CI_high = exp(conf.high)
+  ) |>
+  # Cap extreme CIs to keep plot readable
+  mutate(CI_high = pmin(CI_high, 20),
+         CI_low = pmax(CI_low, 0.05)) |>
   mutate(vt_bin = factor(vt_bin, levels = vt_bin_levels))
 
 
